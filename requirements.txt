@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+langchain
+langchain-groq
+langchain-huggingface
+langchain-postgres
+psycopg2-binary
+pydantic
+python-dotenv
