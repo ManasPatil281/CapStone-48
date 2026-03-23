@@ -75,3 +75,19 @@ Run the PowerShell test script to verify all endpoints:
 ```
 
 Or use the provided `test_endpoints.http` in VS Code with the REST Client extension.
+
+## 🌐 Frontend Workspace (Next.js)
+
+- Located in `frontend-app/` and scaffolded with **Next.js 14 (App Router + TypeScript)**, Tailwind CSS, shadcn/ui primitives, and Supabase helpers.
+- Install dependencies and start the dev server:
+   ```bash
+   cd frontend-app
+   npm install
+   npm run dev
+   ```
+- Configure Supabase credentials via `frontend-app/.env.local` using the template in `.env.local.example` (anon key for browser, service role key for server actions).
+- Key directories:
+   - `src/app/courses/dsa/[loSlug]/page.tsx`: Linked List LO shell that hydrates live Supabase data for content, roadmap, and quiz tabs.
+   - `src/lib/supabase/`: Browser/server/service-role clients.
+   - `src/lib/adaptive/`: Learning-path + mastery utilities.
+   - `src/components/lo/`: UI building blocks (content tabs, roadmap tree, quiz session, mastery badge, etc.).
