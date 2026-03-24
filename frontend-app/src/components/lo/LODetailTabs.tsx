@@ -5,6 +5,7 @@ import type { Assessment, AssessmentAttempt, ContentTabData } from "@/types/lear
 import type { RoadmapEdge, RoadmapNode } from "@/components/lo/RoadmapTree";
 import { DeliveryTypeTabs } from "@/components/lo/DeliveryTypeTabs";
 import { RoadmapTree } from "@/components/lo/RoadmapTree";
+import { CourseRoadmap } from "@/components/lo/CourseRoadmap";
 import { QuizSession } from "@/components/lo/QuizSession";
 
 interface Props {
@@ -13,25 +14,36 @@ interface Props {
     nodes: RoadmapNode[];
     edges: RoadmapEdge[];
   };
+  courseRoadmap?: {
+    nodes: RoadmapNode[];
+    edges: RoadmapEdge[];
+    mostTakenPathNodeIds?: string[];
+  };
   assessment?: Assessment & { questions: any[] };
   attempts?: AssessmentAttempt[];
   recommendedTab?: string;
 }
 
-export function LODetailTabs({ content, roadmap, assessment, attempts, recommendedTab }: Props) {
+export function LODetailTabs({ content, roadmap, courseRoadmap, assessment, attempts, recommendedTab }: Props) {
   return (
     <Tabs defaultValue="content">
       <TabsList>
         <TabsTrigger value="content">Content</TabsTrigger>
-        <TabsTrigger value="roadmap">Roadmap</TabsTrigger>
+        <TabsTrigger value="roadmap">Module Roadmap</TabsTrigger>
+        {courseRoadmap && <TabsTrigger value="courseRoadmap">📚 Course Path</TabsTrigger>}
         <TabsTrigger value="quiz">Quiz</TabsTrigger>
       </TabsList>
       <TabsContent value="content">
         <DeliveryTypeTabs data={content} recommended={recommendedTab} />
       </TabsContent>
       <TabsContent value="roadmap">
-        <RoadmapTree nodes={roadmap.nodes} edges={roadmap.edges} />
+        <RoadmapTree nodes={roadmap.nodes} edges={roadmap.edges} mostTakenPathNodeIds={courseRoadmap?.mostTakenPathNodeIds} />
       </TabsContent>
+      {courseRoadmap && (
+        <TabsContent value="courseRoadmap">
+          <CourseRoadmap nodes={courseRoadmap.nodes} edges={courseRoadmap.edges} mostTakenPathNodeIds={courseRoadmap.mostTakenPathNodeIds} />
+        </TabsContent>
+      )}
       <TabsContent value="quiz">
         <QuizSession assessment={assessment} attempts={attempts} />
       </TabsContent>

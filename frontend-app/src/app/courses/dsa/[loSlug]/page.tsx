@@ -95,10 +95,24 @@ export default async function LODetailPage({ params }: PageProps) {
     progressMap
   });
 
+  // Build course roadmap with most-taken path highlighting
+  const courseRoadmapData = buildMockDSACourseRoadmap();
+
   return (
     <div className="space-y-10 p-6">
       <LOHeader lo={loDetail} />
-      <LODetailTabs content={contentTabs} roadmap={roadmap} assessment={loDetail.assessment} attempts={attempts} recommendedTab={recommendedTab} />
+      <LODetailTabs
+        content={contentTabs}
+        roadmap={roadmap}
+        courseRoadmap={{
+          nodes: courseRoadmapData.nodes,
+          edges: courseRoadmapData.edges,
+          mostTakenPathNodeIds: courseRoadmapData.mostTakenPathNodeIds
+        }}
+        assessment={loDetail.assessment}
+        attempts={attempts}
+        recommendedTab={recommendedTab}
+      />
     </div>
   );
 }
@@ -223,6 +237,33 @@ function buildMockLinkedListDetail(): LearningObjectDetail {
 
   const dependents: LearningObject[] = [
     {
+      id: "mock-singly-ll",
+      title: "Singly Linked List",
+      slug: "singly-linked-list",
+      description: "Standard linked list with single next pointer.",
+      difficulty_level: 3,
+      estimated_time_minutes: 20,
+      status: "published"
+    },
+    {
+      id: "mock-doubly-ll",
+      title: "Doubly Linked List",
+      slug: "doubly-linked-list",
+      description: "Linked list with bidirectional traversal.",
+      difficulty_level: 3,
+      estimated_time_minutes: 25,
+      status: "published"
+    },
+    {
+      id: "mock-circular-ll",
+      title: "Circular Linked List",
+      slug: "circular-linked-list",
+      description: "Linked list where last node points to first.",
+      difficulty_level: 4,
+      estimated_time_minutes: 20,
+      status: "published"
+    },
+    {
       id: "mock-stack",
       title: "Stack",
       slug: "stack",
@@ -280,7 +321,120 @@ function buildMockLinkedListDetail(): LearningObjectDetail {
       delivery_type_id: "READING_NOTES",
       title: "Linked List Notes",
       content_json: {
-        markdown: "## Linked List Essentials\n- Nodes store `data` and `next`\n- Head points to the first node\n- Common ops: insert, delete, reverse"
+        markdown: `## Linked List Comprehensive Guide
+
+### Node Structure
+A linked list is made up of nodes, where each node contains:
+- **data**: The actual value stored in the node
+- **next**: A pointer/reference to the next node in the list (or null if it's the last node)
+
+\`\`\`python
+class Node:
+    def __init__(self, data, next=None):
+        self.data = data
+        self.next = next
+\`\`\`
+
+### Core Concepts
+
+#### Head Pointer
+- Points to the first node in the linked list
+- Essential for accessing and traversing the list
+- If head is None, the list is empty
+
+#### Traversal
+Traversing involves visiting each node starting from head:
+\`\`\`python
+def print_list(head):
+    current = head
+    while current:  # Keep going until we hit None
+        print(current.data, end=" -> ")
+        current = current.next
+    print("None")
+\`\`\`
+
+**Time Complexity**: O(n) where n is the number of nodes
+
+### Basic Operations
+
+#### Insertion at Head - O(1)
+Adding a new node at the beginning is efficient:
+1. Create new node
+2. Set new node's next to current head
+3. Update head to point to new node
+
+\`\`\`python
+def insert_at_head(head, data):
+    new_node = Node(data)
+    new_node.next = head
+    return new_node  # Return new head
+\`\`\`
+
+#### Insertion at End - O(n)
+To add at the end, we must traverse to find the last node:
+1. Traverse until we find a node where next is None
+2. Create new node
+3. Set last node's next to new node
+
+#### Deletion - O(n)
+To delete a node by value:
+1. Traverse the list
+2. When found, update the previous node's next pointer
+3. Special case: if deleting head, update head reference
+
+#### Reversal - O(n)
+Three pointers technique (prev, current, next):
+\`\`\`python
+def reverse(head):
+    prev, current = None, head
+    while current:
+        next_temp = current.next  # Save next node
+        current.next = prev       # Reverse the link
+        prev = current            # Move prev forward
+        current = next_temp       # Move current forward
+    return prev  # New head
+\`\`\`
+
+### Time & Space Complexity
+
+| Operation | Time | Space |
+|-----------|------|-------|
+| Access | O(n) | O(1) |
+| Search | O(n) | O(1) |
+| Insert at head | O(1) | O(1) |
+| Append at end | O(n) | O(1) |
+| Delete | O(n) | O(1) |
+| Reverse | O(n) | O(1) |
+
+### Common Patterns
+
+#### Two-Pointer Technique
+Useful for finding middle, detecting cycles:
+\`\`\`python
+# Find middle using slow and fast pointers
+slow = fast = head
+while fast and fast.next:
+    slow = slow.next
+    fast = fast.next.next
+# slow is at middle
+\`\`\`
+
+#### Cycle Detection (Floyd's Algorithm)
+- Use slow pointer (moves 1 step) and fast pointer (moves 2 steps)
+- If they meet, cycle exists
+- If fast reaches None, no cycle
+
+### Edge Cases to Handle
+1. Empty list (head is None)
+2. Single node list
+3. Operations on head (need to return new head)
+4. Circular lists
+5. None values in data
+
+### Comparison with Arrays
+- **Linked Lists**: Efficient insertion/deletion at any point (if we have the reference), uses dynamic memory
+- **Arrays**: Fast random access, but insertion/deletion requires shifting elements
+`
       },
       sequence_order: sequenceOrder++,
       is_active: true,
@@ -306,14 +460,44 @@ function buildMockLinkedListDetail(): LearningObjectDetail {
       title: "Linked List Playground",
       content_json: {
         language: "python",
-        starter_code: "class Node:\n    def __init__(self, data, next=None):\n        self.data = data\n        self.next = next\n",
+        starter_code: `class Node:
+    def __init__(self, data, next=None):
+        self.data = data
+        self.next = next
+
+class LinkedList:
+    def __init__(self):
+        self.head = None
+
+    def print_list(self):
+        elements = []
+        current = self.head
+        while current:
+            elements.append(str(current.data))
+            current = current.next
+        return " -> ".join(elements) if elements else "Empty"
+`,
         practices: [
           {
             id: 1,
-            title: "Insert at head",
-            description: "Add a node to the beginning of the list",
-            expected_output: "3 -> 2 -> 1",
-            hint: "Update head pointer"
+            title: "Insert at Head",
+            description: "Add a new node with value to the beginning of the linked list. Print the result.",
+            expected_output: "3 -> 2 -> 1 -> ",
+            hint: "Create a new node, set its next to self.head, then update self.head"
+          },
+          {
+            id: 2,
+            title: "Delete Node",
+            description: "Delete the first node with the given value from the list.",
+            expected_output: "1 -> 3 -> ",
+            hint: "Traverse and find the node. Update previous node's next pointer to skip the target node."
+          },
+          {
+            id: 3,
+            title: "Reverse Linked List",
+            description: "Reverse the entire linked list. Print the reversed list.",
+            expected_output: "1 -> 2 -> 3 -> ",
+            hint: "Use three pointers: prev, current, next. Iterate and reverse the next pointers."
           }
         ]
       },
@@ -329,7 +513,15 @@ function buildMockLinkedListDetail(): LearningObjectDetail {
       content_json: {
         cards: [
           { front: "What does the head pointer store?", back: "Reference to the first node" },
-          { front: "Time to insert at head?", back: "O(1)" }
+          { front: "Time complexity to insert at head?", back: "O(1) - constant time" },
+          { front: "Time complexity to append at end?", back: "O(n) - linear, must traverse" },
+          { front: "Time complexity to access element at index i?", back: "O(i) or O(n) in worst case" },
+          { front: "What is the worst-case search time in linked list?", back: "O(n) - must check every node" },
+          { front: "How do you detect a cycle in a linked list?", back: "Floyd's algorithm: use slow (1 step) and fast (2 steps) pointers" },
+          { front: "What happens when you delete the head node?", back: "Must return the new head (head.next)" },
+          { front: "What is the space complexity for reversing a linked list?", back: "O(1) if iterative, O(n) if recursive (call stack)" },
+          { front: "How do you find the middle of a linked list efficiently?", back: "Use two pointers: slow (1 step) and fast (2 steps)" },
+          { front: "What is the main advantage of linked lists over arrays?", back: "Efficient insertion/deletion anywhere (O(1) if position is known)" }
         ]
       },
       sequence_order: sequenceOrder++,
@@ -361,12 +553,140 @@ function buildMockLinkedListDetail(): LearningObjectDetail {
           id: "mock-q1",
           assessment_id: "mock-assessment",
           question_type: "MCQ",
-          question_text: "What is the time complexity to insert at the head?",
+          question_text: "What is the time complexity to insert at the head of a linked list?",
           metadata_json: null,
           marks: 5,
           options: [
             { id: "mock-q1-a", question_id: "mock-q1", option_text: "O(1)", is_correct: true },
-            { id: "mock-q1-b", question_id: "mock-q1", option_text: "O(n)", is_correct: false }
+            { id: "mock-q1-b", question_id: "mock-q1", option_text: "O(n)", is_correct: false },
+            { id: "mock-q1-c", question_id: "mock-q1", option_text: "O(log n)", is_correct: false },
+            { id: "mock-q1-d", question_id: "mock-q1", option_text: "O(n²)", is_correct: false }
+          ]
+        },
+        {
+          id: "mock-q2",
+          assessment_id: "mock-assessment",
+          question_type: "MCQ",
+          question_text: "What is the main disadvantage of linked lists compared to arrays?",
+          metadata_json: null,
+          marks: 5,
+          options: [
+            { id: "mock-q2-a", question_id: "mock-q2", option_text: "No random access - O(n) to access element at index i", is_correct: true },
+            { id: "mock-q2-b", question_id: "mock-q2", option_text: "Uses more memory per element", is_correct: false },
+            { id: "mock-q2-c", question_id: "mock-q2", option_text: "Cannot store multiple types", is_correct: false },
+            { id: "mock-q2-d", question_id: "mock-q2", option_text: "Cannot be sorted", is_correct: false }
+          ]
+        },
+        {
+          id: "mock-q3",
+          assessment_id: "mock-assessment",
+          question_type: "MCQ",
+          question_text: "Which algorithm efficiently detects a cycle in a linked list?",
+          metadata_json: null,
+          marks: 5,
+          options: [
+            { id: "mock-q3-a", question_id: "mock-q3", option_text: "Floyd's Cycle Detection (Tortoise & Hare)", is_correct: true },
+            { id: "mock-q3-b", question_id: "mock-q3", option_text: "Binary Search", is_correct: false },
+            { id: "mock-q3-c", question_id: "mock-q3", option_text: "Quick Sort", is_correct: false },
+            { id: "mock-q3-d", question_id: "mock-q3", option_text: "Bubble Sort", is_correct: false }
+          ]
+        },
+        {
+          id: "mock-q4",
+          assessment_id: "mock-assessment",
+          question_type: "MCQ",
+          question_text: "What is the space complexity of reversing a linked list using iteration?",
+          metadata_json: null,
+          marks: 5,
+          options: [
+            { id: "mock-q4-a", question_id: "mock-q4", option_text: "O(1)", is_correct: true },
+            { id: "mock-q4-b", question_id: "mock-q4", option_text: "O(n)", is_correct: false },
+            { id: "mock-q4-c", question_id: "mock-q4", option_text: "O(log n)", is_correct: false },
+            { id: "mock-q4-d", question_id: "mock-q4", option_text: "O(n²)", is_correct: false }
+          ]
+        },
+        {
+          id: "mock-q5",
+          assessment_id: "mock-assessment",
+          question_type: "MCQ",
+          question_text: "When deleting the head node, what must you return?",
+          metadata_json: null,
+          marks: 5,
+          options: [
+            { id: "mock-q5-a", question_id: "mock-q5", option_text: "head.next (the new head)", is_correct: true },
+            { id: "mock-q5-b", question_id: "mock-q5", option_text: "head (the original head)", is_correct: false },
+            { id: "mock-q5-c", question_id: "mock-q5", option_text: "None", is_correct: false },
+            { id: "mock-q5-d", question_id: "mock-q5", option_text: "head.data", is_correct: false }
+          ]
+        },
+        {
+          id: "mock-q6",
+          assessment_id: "mock-assessment",
+          question_type: "MCQ",
+          question_text: "How do you find the middle of a linked list efficiently?",
+          metadata_json: null,
+          marks: 5,
+          options: [
+            { id: "mock-q6-a", question_id: "mock-q6", option_text: "Use slow pointer (1 step) and fast pointer (2 steps)", is_correct: true },
+            { id: "mock-q6-b", question_id: "mock-q6", option_text: "Count all nodes first", is_correct: false },
+            { id: "mock-q6-c", question_id: "mock-q6", option_text: "Binary search on indices", is_correct: false },
+            { id: "mock-q6-d", question_id: "mock-q6", option_text: "It's impossible efficiently", is_correct: false }
+          ]
+        },
+        {
+          id: "mock-q7",
+          assessment_id: "mock-assessment",
+          question_type: "MCQ",
+          question_text: "What is the worst-case time complexity of searching for a value in a linked list?",
+          metadata_json: null,
+          marks: 5,
+          options: [
+            { id: "mock-q7-a", question_id: "mock-q7", option_text: "O(n)", is_correct: true },
+            { id: "mock-q7-b", question_id: "mock-q7", option_text: "O(log n)", is_correct: false },
+            { id: "mock-q7-c", question_id: "mock-q7", option_text: "O(1)", is_correct: false },
+            { id: "mock-q7-d", question_id: "mock-q7", option_text: "O(n²)", is_correct: false }
+          ]
+        },
+        {
+          id: "mock-q8",
+          assessment_id: "mock-assessment",
+          question_type: "MCQ",
+          question_text: "In a doubly linked list, each node has which pointers?",
+          metadata_json: null,
+          marks: 5,
+          options: [
+            { id: "mock-q8-a", question_id: "mock-q8", option_text: "prev and next pointers", is_correct: true },
+            { id: "mock-q8-b", question_id: "mock-q8", option_text: "left and right pointers", is_correct: false },
+            { id: "mock-q8-c", question_id: "mock-q8", option_text: "parent and child pointers", is_correct: false },
+            { id: "mock-q8-d", question_id: "mock-q8", option_text: "Only next pointer", is_correct: false }
+          ]
+        },
+        {
+          id: "mock-q9",
+          assessment_id: "mock-assessment",
+          question_type: "MCQ",
+          question_text: "What data structure can be efficiently implemented using a linked list?",
+          metadata_json: null,
+          marks: 5,
+          options: [
+            { id: "mock-q9-a", question_id: "mock-q9", option_text: "Stack and Queue", is_correct: true },
+            { id: "mock-q9-b", question_id: "mock-q9", option_text: "Only Stack", is_correct: false },
+            { id: "mock-q9-c", question_id: "mock-q9", option_text: "Hash Table", is_correct: false },
+            { id: "mock-q9-d", question_id: "mock-q9", option_text: "Binary Search Tree", is_correct: false }
+          ]
+        },
+        {
+          id: "mock-q10",
+          assessment_id: "mock-assessment",
+          question_type: "MCQ",
+          question_text: "What is the time complexity to append an element at the end of an unsorted linked list without a tail pointer?",
+          metadata_json: null,
+          marks: 5,
+          options: [
+            { id: "mock-q10-a", question_id: "mock-q10", option_text: "O(n)", is_correct: true },
+            { id: "mock-q10-b", question_id: "mock-q10", option_text: "O(1)", is_correct: false },
+            { id: "mock-q10-c", question_id: "mock-q10", option_text: "O(log n)", is_correct: false },
+            { id: "mock-q10-d", question_id: "mock-q10", option_text: "O(n²)", is_correct: false }
           ]
         }
       ]
@@ -394,4 +714,124 @@ function buildMockProgressMap(lo: LearningObjectDetail) {
     map.set(dep.id, { status: "NOT_STARTED" });
   });
   return map;
+}
+
+export interface CourseModule extends LearningObject {
+  isOnMostTakenPath?: boolean;
+}
+
+function buildMockDSACourseRoadmap(): { nodes: RoadmapNode[]; edges: RoadmapEdge[]; mostTakenPathNodeIds: string[] } {
+  const modules: CourseModule[] = [
+    {
+      id: "mock-arrays",
+      title: "Arrays",
+      slug: "arrays",
+      description: "Contiguous memory structures and indexing.",
+      difficulty_level: 1,
+      estimated_time_minutes: 30,
+      status: "published",
+      isOnMostTakenPath: true
+    },
+    {
+      id: "mock-pointers",
+      title: "Pointers & References",
+      slug: "pointers-references",
+      description: "Memory addresses and references.",
+      difficulty_level: 2,
+      estimated_time_minutes: 25,
+      status: "published",
+      isOnMostTakenPath: true
+    },
+    {
+      id: "mock-linked-list",
+      title: "Linked List",
+      slug: "linked-list",
+      description: "Singly and doubly linked lists with classic operations.",
+      difficulty_level: 3,
+      estimated_time_minutes: 45,
+      status: "published",
+      isOnMostTakenPath: true
+    },
+    {
+      id: "mock-stack",
+      title: "Stack",
+      slug: "stack",
+      description: "LIFO data structure.",
+      difficulty_level: 3,
+      estimated_time_minutes: 30,
+      status: "published",
+      isOnMostTakenPath: true
+    },
+    {
+      id: "mock-queue",
+      title: "Queue",
+      slug: "queue",
+      description: "FIFO data structure.",
+      difficulty_level: 3,
+      estimated_time_minutes: 30,
+      status: "published"
+    },
+    {
+      id: "mock-binary-tree",
+      title: "Binary Tree",
+      slug: "binary-tree",
+      description: "Tree traversal and operations.",
+      difficulty_level: 4,
+      estimated_time_minutes: 50,
+      status: "published",
+      isOnMostTakenPath: true
+    },
+    {
+      id: "mock-graph",
+      title: "Graph & Graph Algorithms",
+      slug: "graph",
+      description: "Graph representations and traversals.",
+      difficulty_level: 4,
+      estimated_time_minutes: 60,
+      status: "published"
+    },
+    {
+      id: "mock-sorting",
+      title: "Sorting Algorithms",
+      slug: "sorting",
+      description: "Quick Sort, Merge Sort, and more.",
+      difficulty_level: 3,
+      estimated_time_minutes: 45,
+      status: "published"
+    }
+  ];
+
+  // Build nodes
+  const nodes: RoadmapNode[] = modules.map((m) => ({
+    id: m.id,
+    title: m.title,
+    status: "NOT_STARTED" as const,
+    difficulty: m.difficulty_level,
+    estimatedTime: m.estimated_time_minutes
+  }));
+
+  // Extract most-taken path node IDs
+  const mostTakenPathNodeIds = modules
+    .filter((m) => m.isOnMostTakenPath)
+    .map((m) => m.id);
+
+  // Build edges (prerequisites)
+  const edges: RoadmapEdge[] = [
+    // Arrays -> Pointers
+    { source: "mock-arrays", target: "mock-pointers" },
+    // Pointers -> Linked List
+    { source: "mock-pointers", target: "mock-linked-list" },
+    // Linked List -> Stack
+    { source: "mock-linked-list", target: "mock-stack" },
+    // Linked List -> Queue
+    { source: "mock-linked-list", target: "mock-queue" },
+    // Arrays -> Binary Tree
+    { source: "mock-arrays", target: "mock-binary-tree" },
+    // Binary Tree -> Graph
+    { source: "mock-binary-tree", target: "mock-graph" },
+    // Arrays -> Sorting (can learn independently)
+    { source: "mock-arrays", target: "mock-sorting" }
+  ];
+
+  return { nodes, edges, mostTakenPathNodeIds };
 }

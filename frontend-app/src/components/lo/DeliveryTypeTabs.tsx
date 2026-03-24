@@ -33,17 +33,25 @@ export function DeliveryTypeTabs({ data, recommended }: Props) {
     recommended && (data[recommended as keyof ContentTabData]?.length ?? 0) > 0 ? (recommended as TabKey) : firstAvailable;
 
   return (
-    <Tabs defaultValue={defaultValue} className="w-full">
-      <TabsList>
+    <Tabs defaultValue={defaultValue} className="w-full space-y-4">
+      <TabsList className="w-full justify-start gap-2 bg-slate-900/40 border-b border-white/5 rounded-lg p-1 overflow-x-auto">
         {TAB_ORDER.map((tab) => {
           const entries = data[tab.key as keyof ContentTabData];
           if (!entries || entries.length === 0) return null;
           const isRecommended = recommended === tab.key;
           return (
-            <TabsTrigger key={tab.key} value={tab.key} className={isRecommended ? "border border-brand/40 bg-brand/10" : undefined}>
-              <span>{tab.icon}</span>
-              {tab.label}
-              {isRecommended ? <span className="text-[10px] uppercase text-brand">Recommended</span> : null}
+            <TabsTrigger
+              key={tab.key}
+              value={tab.key}
+              className={`whitespace-nowrap text-sm flex items-center gap-2 px-4 py-2 rounded-lg transition-all ${
+                isRecommended
+                  ? "border border-brand/50 bg-brand/10 text-brand font-semibold shadow-lg shadow-brand/20"
+                  : "text-slate-300 hover:text-white hover:bg-slate-800/40"
+              }`}
+            >
+              <span className="text-lg">{tab.icon}</span>
+              <span>{tab.label}</span>
+              {isRecommended && <span className="text-[10px] uppercase font-bold ml-1 px-2 py-1 bg-brand/20 text-brand rounded">Recommended</span>}
             </TabsTrigger>
           );
         })}
@@ -53,7 +61,7 @@ export function DeliveryTypeTabs({ data, recommended }: Props) {
         const content = data[tab.key as keyof ContentTabData];
         if (!content || content.length === 0) return null;
         return (
-          <TabsContent key={tab.key} value={tab.key}>
+          <TabsContent key={tab.key} value={tab.key} className="rounded-2xl bg-slate-900/30 border border-white/5 p-6">
             <ContentRenderer tab={tab.key} payload={content} />
           </TabsContent>
         );
