@@ -95,8 +95,60 @@ export default async function LODetailPage({ params }: PageProps) {
     progressMap
   });
 
-  // Build course roadmap with most-taken path highlighting
-  const courseRoadmapData = buildMockDSACourseRoadmap();
+  let courseRoadmapData: { nodes: RoadmapNode[]; edges: RoadmapEdge[]; mostTakenPathNodeIds?: string[] } | undefined;
+
+  if (supabase) {
+    const { data: dsaCourseRow } = await supabase.from("course").select("id").eq("slug", "dsa").maybeSingle();
+    const dsaCourseId = (dsaCourseRow as { id?: string } | null)?.id;
+
+    if (dsaCourseId) {
+      const { data: courseMembershipRows } = await supabase
+        .from("course_learning_object")
+        .select("learning_object_id")
+        .eq("course_id", dsaCourseId);
+
+      const courseLoIds = (courseMembershipRows ?? [])
+        .map((row: any) => row.learning_object_id as string)
+        .filter(Boolean);
+
+      if (courseLoIds.length > 0) {
+        const [courseLearningObjectsRes, prereqEdgesRes] = await Promise.all([
+          supabase.from("learning_object").select("*").in("id", courseLoIds),
+          supabase
+            .from("learning_object_prerequisite")
+            .select("prerequisite_lo_id, learning_object_id")
+            .in("prerequisite_lo_id", courseLoIds)
+            .in("learning_object_id", courseLoIds)
+        ]);
+
+        const courseLearningObjects = (courseLearningObjectsRes.data as LearningObject[] | null) ?? [];
+        const courseLoIdSet = new Set(courseLearningObjects.map((item) => item.id));
+
+        const nodes: RoadmapNode[] = courseLearningObjects.map((item) => ({
+          id: item.id,
+          slug: item.slug,
+          title: item.title,
+          difficulty: item.difficulty_level,
+          estimatedTime: item.estimated_time_minutes,
+          status: "NOT_STARTED"
+        }));
+
+        const edges: RoadmapEdge[] = (prereqEdgesRes.data ?? [])
+          .filter(
+            (edge: any) =>
+              courseLoIdSet.has(edge.prerequisite_lo_id as string) &&
+              courseLoIdSet.has(edge.learning_object_id as string)
+          )
+          .map((edge: any) => ({
+            source: edge.prerequisite_lo_id as string,
+            target: edge.learning_object_id as string
+          }));
+
+        // TODO: Replace hardcoded/empty popular path with learner analytics-derived path.
+        courseRoadmapData = { nodes, edges };
+      }
+    }
+  }
 
   return (
     <div className="space-y-10 p-6">
@@ -104,11 +156,7 @@ export default async function LODetailPage({ params }: PageProps) {
       <LODetailTabs
         content={contentTabs}
         roadmap={roadmap}
-        courseRoadmap={{
-          nodes: courseRoadmapData.nodes,
-          edges: courseRoadmapData.edges,
-          mostTakenPathNodeIds: courseRoadmapData.mostTakenPathNodeIds
-        }}
+        courseRoadmap={courseRoadmapData}
         assessment={loDetail.assessment}
         attempts={attempts}
         recommendedTab={recommendedTab}
@@ -179,10 +227,11 @@ function buildRoadmap({
   prerequisites: LearningObject[];
   dependents: LearningObject[];
   progressMap: Map<string, any> | null;
-}): { nodes: RoadmapNode[]; edges: RoadmapEdge[] } {
+}): { nodes: RoadmapNode[]; edges: RoadmapEdge[]; currentNodeId: string } {
   const nodes: RoadmapNode[] = [
     ...prerequisites.map((pr) => ({
       id: pr.id,
+      slug: pr.slug,
       title: pr.title,
       difficulty: pr.difficulty_level,
       estimatedTime: pr.estimated_time_minutes,
@@ -190,6 +239,7 @@ function buildRoadmap({
     })),
     {
       id: lo.id,
+      slug: lo.slug,
       title: lo.title,
       difficulty: lo.difficulty_level,
       estimatedTime: lo.estimated_time_minutes,
@@ -197,6 +247,7 @@ function buildRoadmap({
     },
     ...dependents.map((dep) => ({
       id: dep.id,
+      slug: dep.slug,
       title: dep.title,
       difficulty: dep.difficulty_level,
       estimatedTime: dep.estimated_time_minutes,
@@ -209,7 +260,7 @@ function buildRoadmap({
     ...dependents.map((dep) => ({ source: lo.id, target: dep.id }))
   ];
 
-  return { nodes, edges };
+  return { nodes, edges, currentNodeId: lo.id };
 }
 
 function buildMockLinkedListDetail(): LearningObjectDetail {
@@ -716,122 +767,3 @@ function buildMockProgressMap(lo: LearningObjectDetail) {
   return map;
 }
 
-export interface CourseModule extends LearningObject {
-  isOnMostTakenPath?: boolean;
-}
-
-function buildMockDSACourseRoadmap(): { nodes: RoadmapNode[]; edges: RoadmapEdge[]; mostTakenPathNodeIds: string[] } {
-  const modules: CourseModule[] = [
-    {
-      id: "mock-arrays",
-      title: "Arrays",
-      slug: "arrays",
-      description: "Contiguous memory structures and indexing.",
-      difficulty_level: 1,
-      estimated_time_minutes: 30,
-      status: "published",
-      isOnMostTakenPath: true
-    },
-    {
-      id: "mock-pointers",
-      title: "Pointers & References",
-      slug: "pointers-references",
-      description: "Memory addresses and references.",
-      difficulty_level: 2,
-      estimated_time_minutes: 25,
-      status: "published",
-      isOnMostTakenPath: true
-    },
-    {
-      id: "mock-linked-list",
-      title: "Linked List",
-      slug: "linked-list",
-      description: "Singly and doubly linked lists with classic operations.",
-      difficulty_level: 3,
-      estimated_time_minutes: 45,
-      status: "published",
-      isOnMostTakenPath: true
-    },
-    {
-      id: "mock-stack",
-      title: "Stack",
-      slug: "stack",
-      description: "LIFO data structure.",
-      difficulty_level: 3,
-      estimated_time_minutes: 30,
-      status: "published",
-      isOnMostTakenPath: true
-    },
-    {
-      id: "mock-queue",
-      title: "Queue",
-      slug: "queue",
-      description: "FIFO data structure.",
-      difficulty_level: 3,
-      estimated_time_minutes: 30,
-      status: "published"
-    },
-    {
-      id: "mock-binary-tree",
-      title: "Binary Tree",
-      slug: "binary-tree",
-      description: "Tree traversal and operations.",
-      difficulty_level: 4,
-      estimated_time_minutes: 50,
-      status: "published",
-      isOnMostTakenPath: true
-    },
-    {
-      id: "mock-graph",
-      title: "Graph & Graph Algorithms",
-      slug: "graph",
-      description: "Graph representations and traversals.",
-      difficulty_level: 4,
-      estimated_time_minutes: 60,
-      status: "published"
-    },
-    {
-      id: "mock-sorting",
-      title: "Sorting Algorithms",
-      slug: "sorting",
-      description: "Quick Sort, Merge Sort, and more.",
-      difficulty_level: 3,
-      estimated_time_minutes: 45,
-      status: "published"
-    }
-  ];
-
-  // Build nodes
-  const nodes: RoadmapNode[] = modules.map((m) => ({
-    id: m.id,
-    title: m.title,
-    status: "NOT_STARTED" as const,
-    difficulty: m.difficulty_level,
-    estimatedTime: m.estimated_time_minutes
-  }));
-
-  // Extract most-taken path node IDs
-  const mostTakenPathNodeIds = modules
-    .filter((m) => m.isOnMostTakenPath)
-    .map((m) => m.id);
-
-  // Build edges (prerequisites)
-  const edges: RoadmapEdge[] = [
-    // Arrays -> Pointers
-    { source: "mock-arrays", target: "mock-pointers" },
-    // Pointers -> Linked List
-    { source: "mock-pointers", target: "mock-linked-list" },
-    // Linked List -> Stack
-    { source: "mock-linked-list", target: "mock-stack" },
-    // Linked List -> Queue
-    { source: "mock-linked-list", target: "mock-queue" },
-    // Arrays -> Binary Tree
-    { source: "mock-arrays", target: "mock-binary-tree" },
-    // Binary Tree -> Graph
-    { source: "mock-binary-tree", target: "mock-graph" },
-    // Arrays -> Sorting (can learn independently)
-    { source: "mock-arrays", target: "mock-sorting" }
-  ];
-
-  return { nodes, edges, mostTakenPathNodeIds };
-}

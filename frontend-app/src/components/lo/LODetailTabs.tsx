@@ -13,6 +13,7 @@ interface Props {
   roadmap: {
     nodes: RoadmapNode[];
     edges: RoadmapEdge[];
+    currentNodeId?: string;
   };
   courseRoadmap?: {
     nodes: RoadmapNode[];
@@ -30,14 +31,19 @@ export function LODetailTabs({ content, roadmap, courseRoadmap, assessment, atte
       <TabsList>
         <TabsTrigger value="content">Content</TabsTrigger>
         <TabsTrigger value="roadmap">Module Roadmap</TabsTrigger>
-        {courseRoadmap && <TabsTrigger value="courseRoadmap">📚 Course Path</TabsTrigger>}
+        {courseRoadmap && <TabsTrigger value="courseRoadmap">📚 Course Roadmap</TabsTrigger>}
         <TabsTrigger value="quiz">Quiz</TabsTrigger>
       </TabsList>
       <TabsContent value="content">
         <DeliveryTypeTabs data={content} recommended={recommendedTab} />
       </TabsContent>
       <TabsContent value="roadmap">
-        <RoadmapTree nodes={roadmap.nodes} edges={roadmap.edges} mostTakenPathNodeIds={courseRoadmap?.mostTakenPathNodeIds} />
+        <RoadmapTree
+          nodes={roadmap.nodes}
+          edges={roadmap.edges}
+          currentNodeId={roadmap.currentNodeId}
+          mostTakenPathNodeIds={courseRoadmap?.mostTakenPathNodeIds}
+        />
       </TabsContent>
       {courseRoadmap && (
         <TabsContent value="courseRoadmap">

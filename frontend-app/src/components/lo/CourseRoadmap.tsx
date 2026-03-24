@@ -2,7 +2,9 @@
 
 import ReactFlow, { Background, Controls, MiniMap, Position, MarkerType } from "reactflow";
 import "reactflow/dist/style.css";
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import type { NodeMouseHandler, ReactFlowInstance } from "reactflow";
 import type { RoadmapNode, RoadmapEdge } from "@/components/lo/RoadmapTree";
 
 interface Props {
@@ -19,18 +21,125 @@ const statusColorMap: Record<RoadmapNode["status"], string> = {
 };
 
 const mostTakenPathColor = "#fbbf24"; // Amber/gold for highlight
+const HARDCODED_POPULAR_PATH_SLUGS = ["arrays", "pointers-references", "linked-list", "stack", "binary-tree"] as const;
 
 export function CourseRoadmap({ nodes, edges, mostTakenPathNodeIds = [] }: Props) {
+  const router = useRouter();
+  const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
+
+  const nodeById = useMemo(() => {
+    const map = new Map<string, RoadmapNode>();
+    nodes.forEach((node) => map.set(node.id, node));
+    return map;
+  }, [nodes]);
+
+  const normalizedEdges = useMemo(
+    () => edges.filter((edge) => nodeById.has(edge.source) && nodeById.has(edge.target)),
+    [edges, nodeById]
+  );
+
+  const positionMap = useMemo(() => {
+    const COLUMN_GAP = 280;
+    const ROW_GAP = 150;
+    const LEFT_PADDING = 80;
+    const TOP_PADDING = 70;
+
+    const inDegree = new Map<string, number>();
+    const adjacency = new Map<string, string[]>();
+
+    nodes.forEach((node) => {
+      inDegree.set(node.id, 0);
+      adjacency.set(node.id, []);
+    });
+
+    normalizedEdges.forEach((edge) => {
+      adjacency.get(edge.source)!.push(edge.target);
+      inDegree.set(edge.target, (inDegree.get(edge.target) ?? 0) + 1);
+    });
+
+    const roots = nodes
+      .filter((node) => (inDegree.get(node.id) ?? 0) === 0)
+      .map((node) => node.id)
+      .sort((a, b) => (nodeById.get(a)?.title ?? "").localeCompare(nodeById.get(b)?.title ?? ""));
+
+    const queue = [...roots];
+    const level = new Map<string, number>();
+    nodes.forEach((node) => level.set(node.id, 0));
+
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      const currentLevel = level.get(current) ?? 0;
+      const neighbors = [...(adjacency.get(current) ?? [])].sort((a, b) =>
+        (nodeById.get(a)?.title ?? "").localeCompare(nodeById.get(b)?.title ?? "")
+      );
+
+      neighbors.forEach((next) => {
+        level.set(next, Math.max(level.get(next) ?? 0, currentLevel + 1));
+        inDegree.set(next, (inDegree.get(next) ?? 0) - 1);
+        if ((inDegree.get(next) ?? 0) === 0) {
+          queue.push(next);
+        }
+      });
+    }
+
+    // If there are cycles, place unresolved nodes deterministically in the first column.
+    const unresolved = nodes
+      .filter((node) => (inDegree.get(node.id) ?? 0) > 0)
+      .sort((a, b) => a.title.localeCompare(b.title));
+    unresolved.forEach((node) => level.set(node.id, 0));
+
+    const grouped = new Map<number, RoadmapNode[]>();
+    nodes.forEach((node) => {
+      const depth = level.get(node.id) ?? 0;
+      const bucket = grouped.get(depth) ?? [];
+      bucket.push(node);
+      grouped.set(depth, bucket);
+    });
+
+    const map = new Map<string, { x: number; y: number }>();
+    [...grouped.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .forEach(([depth, columnNodes]) => {
+        columnNodes
+          .sort((a, b) => a.title.localeCompare(b.title))
+          .forEach((node, rowIndex) => {
+            map.set(node.id, {
+              x: LEFT_PADDING + depth * COLUMN_GAP,
+              y: TOP_PADDING + rowIndex * ROW_GAP
+            });
+          });
+      });
+
+    return map;
+  }, [nodeById, nodes, normalizedEdges]);
+
+  const resolvedMostTakenPathNodeIds = useMemo(() => {
+    if (mostTakenPathNodeIds.length > 0) {
+      return mostTakenPathNodeIds;
+    }
+
+    const slugToNodeId = new Map<string, string>();
+    nodes.forEach((node) => {
+      if (node.slug) {
+        slugToNodeId.set(node.slug, node.id);
+      }
+    });
+
+    return HARDCODED_POPULAR_PATH_SLUGS
+      .map((slug) => slugToNodeId.get(slug))
+      .filter((id): id is string => Boolean(id));
+  }, [mostTakenPathNodeIds, nodes]);
+
   const flowNodes = useMemo(
     () =>
-      nodes.map((node, idx) => {
-        const isOnPath = mostTakenPathNodeIds.includes(node.id);
+      nodes.map((node) => {
+        const isOnPath = resolvedMostTakenPathNodeIds.includes(node.id);
         const baseColor = statusColorMap[node.status];
 
         return {
           id: node.id,
-          data: { label: CourseNodeContent(node, isOnPath) },
-          position: { x: (idx % 4) * 280, y: Math.floor(idx / 4) * 200 },
+          data: { label: CourseNodeContent(node, isOnPath), status: node.status, slug: node.slug },
+          position: positionMap.get(node.id) ?? { x: 80, y: 70 },
           sourcePosition: Position.Right,
           targetPosition: Position.Left,
           style: {
@@ -40,17 +149,18 @@ export function CourseRoadmap({ nodes, edges, mostTakenPathNodeIds = [] }: Props
             padding: 16,
             color: "white",
             boxShadow: isOnPath ? `0 0 20px ${mostTakenPathColor}80` : "none",
-            fontWeight: isOnPath ? "600" : "500"
+            fontWeight: isOnPath ? "600" : "500",
+            cursor: node.slug ? "pointer" : "default"
           }
         };
       }),
-    [nodes, mostTakenPathNodeIds]
+    [nodes, positionMap, resolvedMostTakenPathNodeIds]
   );
 
   const flowEdges = useMemo(
     () =>
-      edges.map((edge) => {
-        const isOnPath = mostTakenPathNodeIds.includes(edge.source) && mostTakenPathNodeIds.includes(edge.target);
+      normalizedEdges.map((edge) => {
+        const isOnPath = resolvedMostTakenPathNodeIds.includes(edge.source) && resolvedMostTakenPathNodeIds.includes(edge.target);
 
         return {
           ...edge,
@@ -63,23 +173,48 @@ export function CourseRoadmap({ nodes, edges, mostTakenPathNodeIds = [] }: Props
           markerEnd: { type: MarkerType.ArrowClosed, color: isOnPath ? mostTakenPathColor : "#475569" }
         };
       }),
-    [edges, mostTakenPathNodeIds]
+    [normalizedEdges, resolvedMostTakenPathNodeIds]
   );
+
+  useEffect(() => {
+    if (!rfInstance) return;
+    const frame = window.requestAnimationFrame(() => {
+      rfInstance.fitView({ padding: 0.2, duration: 250 });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [flowEdges, flowNodes, rfInstance]);
+
+  const handleNodeClick = useCallback<NodeMouseHandler>((_, node) => {
+    const slug = (node.data as { slug?: string } | undefined)?.slug;
+    if (slug) {
+      router.push(`/courses/dsa/${slug}`);
+    }
+  }, [router]);
 
   return (
     <div className="space-y-3">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between px-2">
         <div>
-          <h3 className="text-sm font-semibold text-slate-200">DSA Learning Path</h3>
-          <p className="text-xs text-slate-400 mt-1">Complete roadmap with prerequisites and recommended progression</p>
+          <h3 className="text-sm font-semibold text-slate-200">DSA Course Roadmap</h3>
+          <p className="text-xs text-slate-400 mt-1">Complete roadmap with prerequisites and progression</p>
         </div>
-        <div className="flex items-center gap-2 bg-yellow-400/10 px-3 py-1 rounded-full w-fit">
-          <div className="h-2 w-2 rounded-full bg-yellow-400" />
-          <p className="text-xs font-semibold text-yellow-300">Most Common Path</p>
-        </div>
+        {resolvedMostTakenPathNodeIds.length > 0 && (
+          <div className="flex items-center gap-2 bg-yellow-400/10 px-3 py-1 rounded-full w-fit">
+            <div className="h-2 w-2 rounded-full bg-yellow-400" />
+            <p className="text-xs font-semibold text-yellow-300">Most Common Path</p>
+          </div>
+        )}
       </div>
       <div className="h-[450px] rounded-3xl border border-white/10 bg-slate-950/80 overflow-hidden sm:h-[600px]">
-        <ReactFlow nodes={flowNodes} edges={flowEdges} fitView>
+        <ReactFlow
+          nodes={flowNodes}
+          edges={flowEdges}
+          onInit={setRfInstance}
+          onNodeClick={handleNodeClick}
+          nodesDraggable={true}
+          panOnDrag={true}
+          zoomOnScroll={true}
+        >
           <Background className="opacity-20" />
           <MiniMap
             pannable
