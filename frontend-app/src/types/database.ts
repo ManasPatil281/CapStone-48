@@ -97,6 +97,84 @@ export interface Database {
           is_passed: boolean;
         };
       };
+      course: {
+        Row: {
+          id: string;
+          slug: string;
+          title: string;
+          description: string | null;
+        };
+      };
+      course_learning_object: {
+        Row: {
+          id: string;
+          course_id: string;
+          learning_object_id: string;
+        };
+      };
+      user_profile: {
+        Row: {
+          id: string;
+          user_id: string;
+          role: string;
+          display_name: string | null;
+        };
+      };
+      teacher_lo_submission: {
+        Row: {
+          id: string;
+          learning_object_id: string;
+          teacher_id: string;
+          status: "draft" | "submitted" | "approved" | "rejected";
+          created_at: string;
+          updated_at: string;
+        };
+      };
+      teacher_lo_submission_content: {
+        Row: {
+          id: string;
+          submission_id: string;
+          delivery_type_id: string;
+          title: string;
+          content_json: Json;
+          sequence_order: number;
+        };
+      };
+      teacher_lo_submission_edge: {
+        Row: {
+          id: string;
+          submission_id: string;
+          source_lo_id: string;
+          target_lo_id: string;
+        };
+      };
+      teacher_lo_submission_assessment: {
+        Row: {
+          id: string;
+          submission_id: string;
+          title: string;
+          pass_percentage: number;
+          max_attempts: number;
+        };
+      };
+      teacher_lo_submission_question: {
+        Row: {
+          id: string;
+          assessment_id: string;
+          question_type: "MCQ" | "TRUE_FALSE" | "CODE" | "SHORT";
+          question_text: string;
+          metadata_json: Json;
+          marks: number;
+        };
+      };
+      teacher_lo_submission_question_option: {
+        Row: {
+          id: string;
+          question_id: string;
+          option_text: string;
+          is_correct: boolean;
+        };
+      };
     };
   };
 }

@@ -16,6 +16,21 @@ export type Question = Tables["lo_question"]["Row"] & {
 export type QuestionOption = Tables["lo_question_option"]["Row"];
 export type AssessmentAttempt = Tables["user_assessment_attempt"]["Row"];
 
+// Teacher submission types
+export type TeacherSubmission = Tables["teacher_lo_submission"]["Row"];
+export type TeacherSubmissionContent = Tables["teacher_lo_submission_content"]["Row"] & {
+  delivery_type?: DeliveryType;
+  // Make it compatible with LearningObjectContent for rendering
+  learning_object_id?: string;
+  is_active?: boolean;
+};
+export type TeacherSubmissionEdge = Tables["teacher_lo_submission_edge"]["Row"];
+export type TeacherSubmissionAssessment = Tables["teacher_lo_submission_assessment"]["Row"];
+export type TeacherSubmissionQuestion = Tables["teacher_lo_submission_question"]["Row"] & {
+  options?: TeacherSubmissionQuestionOption[];
+};
+export type TeacherSubmissionQuestionOption = Tables["teacher_lo_submission_question_option"]["Row"];
+
 export interface LearningObjectDetail extends LearningObject {
   contents: LearningObjectContent[];
   deliveryTypes: Record<string, DeliveryType>;
