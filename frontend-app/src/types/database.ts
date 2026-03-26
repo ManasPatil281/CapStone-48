@@ -115,9 +115,10 @@ export interface Database {
       user_profile: {
         Row: {
           id: string;
-          user_id: string;
+          full_name: string | null;
           role: string;
-          display_name: string | null;
+          created_at: string;
+          updated_at: string;
         };
       };
       teacher_lo_submission: {

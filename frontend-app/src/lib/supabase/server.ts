@@ -1,8 +1,33 @@
 import { cookies } from "next/headers";
-import { createServerComponentClient, type SupabaseClient } from "@supabase/auth-helpers-nextjs";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import type { Database } from "@/types/database";
 
-export function createSupabaseServerClient(): SupabaseClient<Database> {
+export function createSupabaseServerClient() {
   const cookieStore = cookies();
-  return createServerComponentClient<Database>({ cookies: () => cookieStore });
+
+  return createServerClient<Database>(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        get(name: string) {
+          return cookieStore.get(name)?.value;
+        },
+        set(name: string, value: string, options: CookieOptions) {
+          try {
+            cookieStore.set({ name, value, ...options });
+          } catch (error) {
+            // Server component can't set cookies
+          }
+        },
+        remove(name: string, options: CookieOptions) {
+          try {
+            cookieStore.set({ name, value: "", ...options });
+          } catch (error) {
+            // Server component can't remove cookies
+          }
+        }
+      }
+    }
+  );
 }
