@@ -1,18 +1,28 @@
 import { requireAuth } from "@/lib/auth/server";
-import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import Link from "next/link";
 import { redirect } from "next/navigation";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+import type { Database } from "@/types/database";
+import { CourseCatalog } from "./CourseCatalog";
+
+type Course = Database["public"]["Tables"]["course"]["Row"];
 
 export default async function DashboardPage() {
   const user = await requireAuth();
+  const supabase = createSupabaseServerClient();
 
   if (user.role === "TEACHER" || user.role === "ADMIN") {
     redirect("/teacher");
   }
 
+  const { data: courses, error } = await supabase.from("course").select("*").order("title", { ascending: true });
+
+  if (error) {
+    console.error("[DashboardPage] Failed to fetch courses:", error);
+  }
+
   const roleDisplay = user.role || "No Role Assigned";
   const showRoleWarning = !user.role;
+  const availableCourses = (courses ?? []) as Course[];
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-indigo-500/20 via-slate-950 to-slate-900 p-6">
@@ -27,39 +37,7 @@ export default async function DashboardPage() {
           )}
         </div>
 
-        <div className="grid gap-6 md:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle>DSA Course</CardTitle>
-              <CardDescription>Explore data structures and algorithms with adaptive learning</CardDescription>
-            </CardHeader>
-            <div className="px-6 pb-6">
-              <Button asChild>
-                <Link href="/courses/dsa/linked-list">Start with Linked List</Link>
-              </Button>
-            </div>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>My Progress</CardTitle>
-              <CardDescription>Track your learning journey and achievements</CardDescription>
-            </CardHeader>
-            <div className="px-6 pb-6">
-              <p className="text-sm text-slate-400">Coming soon: Progress tracking and analytics</p>
-            </div>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Learning Path</CardTitle>
-              <CardDescription>View your personalized learning roadmap</CardDescription>
-            </CardHeader>
-            <div className="px-6 pb-6">
-              <p className="text-sm text-slate-400">Coming soon: AI-powered learning recommendations</p>
-            </div>
-          </Card>
-        </div>
+        <CourseCatalog courses={availableCourses} />
       </div>
     </main>
   );

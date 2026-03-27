@@ -10,6 +10,7 @@ import { QuizSession } from "@/components/lo/QuizSession";
 
 interface Props {
   content: ContentTabData;
+  courseSlug?: string;
   roadmap: {
     nodes: RoadmapNode[];
     edges: RoadmapEdge[];
@@ -25,7 +26,7 @@ interface Props {
   recommendedTab?: string;
 }
 
-export function LODetailTabs({ content, roadmap, courseRoadmap, assessment, attempts, recommendedTab }: Props) {
+export function LODetailTabs({ content, courseSlug = "dsa", roadmap, courseRoadmap, assessment, attempts, recommendedTab }: Props) {
   return (
     <Tabs defaultValue="content">
       <TabsList>
@@ -47,7 +48,7 @@ export function LODetailTabs({ content, roadmap, courseRoadmap, assessment, atte
       </TabsContent>
       {courseRoadmap && (
         <TabsContent value="courseRoadmap">
-          <CourseRoadmap nodes={courseRoadmap.nodes} edges={courseRoadmap.edges} mostTakenPathNodeIds={courseRoadmap.mostTakenPathNodeIds} />
+          <CourseRoadmap courseSlug={courseSlug} nodes={courseRoadmap.nodes} edges={courseRoadmap.edges} mostTakenPathNodeIds={courseRoadmap.mostTakenPathNodeIds} />
         </TabsContent>
       )}
       <TabsContent value="quiz">

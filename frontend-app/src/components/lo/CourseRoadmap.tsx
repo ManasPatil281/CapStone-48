@@ -4,10 +4,12 @@ import ReactFlow, { Background, Controls, MiniMap, Position, MarkerType } from "
 import "reactflow/dist/style.css";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import type { Route } from "next";
 import type { NodeMouseHandler, ReactFlowInstance } from "reactflow";
 import type { RoadmapNode, RoadmapEdge } from "@/components/lo/RoadmapTree";
 
 interface Props {
+  courseSlug?: string;
   nodes: RoadmapNode[];
   edges: RoadmapEdge[];
   mostTakenPathNodeIds?: string[];
@@ -23,7 +25,7 @@ const statusColorMap: Record<RoadmapNode["status"], string> = {
 const mostTakenPathColor = "#fbbf24"; // Amber/gold for highlight
 const HARDCODED_POPULAR_PATH_SLUGS = ["arrays", "pointers-references", "linked-list", "stack", "binary-tree"] as const;
 
-export function CourseRoadmap({ nodes, edges, mostTakenPathNodeIds = [] }: Props) {
+export function CourseRoadmap({ courseSlug = "dsa", nodes, edges, mostTakenPathNodeIds = [] }: Props) {
   const router = useRouter();
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
 
@@ -187,9 +189,9 @@ export function CourseRoadmap({ nodes, edges, mostTakenPathNodeIds = [] }: Props
   const handleNodeClick = useCallback<NodeMouseHandler>((_, node) => {
     const slug = (node.data as { slug?: string } | undefined)?.slug;
     if (slug) {
-      router.push(`/courses/dsa/${slug}`);
+      router.push(`/courses/${courseSlug}/${slug}` as Route);
     }
-  }, [router]);
+  }, [courseSlug, router]);
 
   return (
     <div className="space-y-3">
