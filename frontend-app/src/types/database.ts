@@ -13,6 +13,15 @@ export interface Database {
           estimated_time_minutes: number;
           status: "draft" | "published" | "archived";
         };
+        Insert: {
+          id?: string;
+          title: string;
+          slug: string;
+          description?: string | null;
+          difficulty_level?: number;
+          estimated_time_minutes?: number;
+          status?: "draft" | "published" | "archived";
+        };
       };
       learning_object_content: {
         Row: {
@@ -126,9 +135,21 @@ export interface Database {
           id: string;
           learning_object_id: string;
           teacher_id: string;
+          course_id: string;
+          title: string;
+          notes: string | null;
           status: "draft" | "submitted" | "approved" | "rejected";
           created_at: string;
           updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          learning_object_id: string;
+          teacher_id: string;
+          course_id: string;
+          title: string;
+          notes?: string | null;
+          status?: "draft" | "submitted" | "approved" | "rejected";
         };
       };
       teacher_lo_submission_content: {
@@ -139,11 +160,27 @@ export interface Database {
           title: string;
           content_json: Json;
           sequence_order: number;
+          is_active: boolean;
+        };
+        Insert: {
+          id?: string;
+          submission_id: string;
+          delivery_type_id: string;
+          title: string;
+          content_json: Json;
+          sequence_order: number;
+          is_active?: boolean;
         };
       };
       teacher_lo_submission_edge: {
         Row: {
           id: string;
+          submission_id: string;
+          source_lo_id: string;
+          target_lo_id: string;
+        };
+        Insert: {
+          id?: string;
           submission_id: string;
           source_lo_id: string;
           target_lo_id: string;

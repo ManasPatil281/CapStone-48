@@ -33,7 +33,9 @@ export default async function TeacherPage() {
               <CardDescription>Submit content for existing learning objects</CardDescription>
             </CardHeader>
             <div className="px-6 pb-6">
-              <p className="text-sm text-slate-400">Coming soon: Content creation workflow</p>
+              <Button asChild className="bg-indigo-600 hover:bg-indigo-500">
+                <Link href="/teacher/submissions/new">Create New Submission</Link>
+              </Button>
             </div>
           </Card>
 
