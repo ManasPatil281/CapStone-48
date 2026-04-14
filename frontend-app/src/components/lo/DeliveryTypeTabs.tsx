@@ -111,34 +111,44 @@ export function DeliveryTypeTabs({ data, assessment, attempts, recommended }: Pr
 
   return (
     <Tabs defaultValue={defaultValue} className="w-full space-y-4">
-      <TabsList className="w-full justify-start gap-2 bg-slate-900/40 border-b border-white/5 rounded-lg p-1 overflow-x-auto">
-        {blocks.map((block, index) => {
-          const isRecommended = mapCodeToLegacyKey(block.code) === recommended;
-          return (
-            <TabsTrigger
-              key={block.key}
-              value={block.key}
-              className={`whitespace-nowrap text-sm flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${
-                isRecommended
-                  ? "border border-brand/40 bg-brand/10 text-brand font-semibold ring-1 ring-brand/20"
-                  : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/40"
-              }`}
-            >
-              {getBlockIcon(block.code)}
-              <span>{index + 1}. {block.label}</span>
-              {isRecommended && (
-                <span className="ml-1 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide bg-brand/20 text-brand">
-                  ✦ Pick
+      {/* ── Scrollable tab strip ── */}
+      <div className="overflow-x-auto">
+        <TabsList className="w-max rounded-lg border border-slate-800/60 bg-slate-900/40 p-1.5 gap-1">
+          {blocks.map((block, index) => {
+            const isRecommended = mapCodeToLegacyKey(block.code) === recommended;
+            return (
+              <TabsTrigger
+                key={block.key}
+                value={block.key}
+                className={`whitespace-nowrap text-xs flex items-center gap-1.5 px-3 py-2 rounded-lg transition-all ${
+                  isRecommended
+                    ? "border border-brand/35 bg-brand/12 !text-brand font-semibold data-[state=active]:bg-brand/20 data-[state=active]:text-brand data-[state=active]:shadow-none"
+                    : ""
+                }`}
+              >
+                {getBlockIcon(block.code)}
+                <span>
+                  <span className="mr-1 font-mono text-[10px] text-slate-600">{index + 1}.</span>
+                  {block.label}
                 </span>
-              )}
-            </TabsTrigger>
-          );
-        })}
-      </TabsList>
+                {isRecommended && (
+                  <span className="ml-0.5 rounded px-1.5 py-px text-[9px] font-bold uppercase tracking-label bg-brand/20 text-brand">
+                    Pick
+                  </span>
+                )}
+              </TabsTrigger>
+            );
+          })}
+        </TabsList>
+      </div>
 
       {blocks.map((block) => {
         return (
-          <TabsContent key={block.key} value={block.key} className="rounded-2xl bg-slate-900/30 border border-white/5 p-6">
+          <TabsContent
+            key={block.key}
+            value={block.key}
+            className="rounded-xl border border-slate-800/60 bg-slate-900/40 p-6 backdrop-blur-[1px]"
+          >
             <ContentRenderer content={block.content} assessment={assessment} attempts={attempts} />
           </TabsContent>
         );
@@ -197,12 +207,18 @@ function ContentRenderer({
       const data = content.content_json as PracticeSetContent;
       const questions = normalizeQuestions(data.questions);
       if (questions.length === 0) {
-        return <p className="text-sm text-slate-400">No practice questions yet.</p>;
+        return <p className="text-sm text-slate-500">No practice questions yet.</p>;
       }
       return (
-        <ol className="list-decimal space-y-3 pl-5 text-slate-200">
+        <ol className="space-y-3">
           {questions.map((question, idx) => (
-            <li key={`${idx}-${question}`} className="leading-relaxed">
+            <li
+              key={`${idx}-${question}`}
+              className="flex gap-3 rounded-lg border border-slate-800/50 bg-slate-900/40 px-4 py-3 text-sm leading-relaxed text-slate-200"
+            >
+              <span className="mt-px flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-slate-800 text-[10px] font-bold text-slate-500">
+                {idx + 1}
+              </span>
               {question}
             </li>
           ))}
@@ -212,7 +228,7 @@ function ContentRenderer({
     case "revisionSheet": {
       const data = content.content_json as RevisionSheetContent;
       return (
-        <div className="rounded-2xl border border-white/10 bg-slate-900/40 p-4 text-slate-200 whitespace-pre-wrap leading-relaxed">
+        <div className="rounded-xl border border-slate-800/60 bg-slate-950/40 px-5 py-4 text-sm leading-relaxed text-slate-300 whitespace-pre-wrap">
           {data.summary || "No revision summary yet."}
         </div>
       );
@@ -302,9 +318,13 @@ function normalizeQuestions(questions: unknown): string[] {
 
 function Block({ title, value }: { title: string; value?: string }) {
   return (
-    <section className="rounded-2xl border border-white/10 bg-slate-900/40 p-4">
-      <p className="text-xs uppercase tracking-wider text-slate-400">{title}</p>
-      <p className="mt-2 whitespace-pre-wrap text-slate-200 leading-relaxed">{value || "Not provided."}</p>
+    <section className="overflow-hidden rounded-xl border border-slate-800/60 bg-slate-950/40">
+      <div className="border-b border-slate-800/60 bg-slate-900/40 px-4 py-2.5">
+        <p className="text-[10px] font-bold uppercase tracking-label text-slate-600">{title}</p>
+      </div>
+      <p className="px-4 py-4 whitespace-pre-wrap text-sm leading-relaxed text-slate-300">
+        {value || "Not provided."}
+      </p>
     </section>
   );
 }
@@ -321,14 +341,24 @@ function MediaPanel({
   body?: string;
 }) {
   if (!imageUrl) {
-    return <p className="text-sm text-slate-400">No image available yet.</p>;
+    return (
+      <p className="text-sm text-slate-500">No image available yet.</p>
+    );
   }
 
   return (
-    <div className="space-y-3">
-      <img src={imageUrl} alt={title || "Visual content"} className="w-full rounded-2xl border border-white/10 bg-slate-950/60 object-contain" />
-      {caption ? <p className="text-sm text-slate-300">{caption}</p> : null}
-      {body ? <p className="text-sm text-slate-200 whitespace-pre-wrap leading-relaxed">{body}</p> : null}
+    <div className="space-y-4">
+      <img
+        src={imageUrl}
+        alt={title || "Visual content"}
+        className="w-full rounded-xl border border-slate-800/60 bg-slate-950/60 object-contain"
+      />
+      {caption && (
+        <p className="text-sm leading-relaxed text-slate-400">{caption}</p>
+      )}
+      {body && (
+        <p className="text-sm leading-relaxed text-slate-300 whitespace-pre-wrap">{body}</p>
+      )}
     </div>
   );
 }

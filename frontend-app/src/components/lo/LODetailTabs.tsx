@@ -26,9 +26,17 @@ interface Props {
   recommendedTab?: string;
 }
 
-export function LODetailTabs({ content, courseSlug = "dsa", roadmap, courseRoadmap, assessment, attempts, recommendedTab }: Props) {
+export function LODetailTabs({
+  content,
+  courseSlug = "dsa",
+  roadmap,
+  courseRoadmap,
+  assessment,
+  attempts,
+  recommendedTab
+}: Props) {
   return (
-    <Tabs defaultValue="content">
+    <Tabs defaultValue="content" className="w-full">
       <TabsList>
         <TabsTrigger value="content">
           <LayoutList className="h-3.5 w-3.5" />
@@ -45,20 +53,37 @@ export function LODetailTabs({ content, courseSlug = "dsa", roadmap, courseRoadm
           </TabsTrigger>
         )}
       </TabsList>
+
       <TabsContent value="content">
-        <DeliveryTypeTabs data={content} assessment={assessment} attempts={attempts} recommended={recommendedTab} />
-      </TabsContent>
-      <TabsContent value="roadmap">
-        <RoadmapTree
-          nodes={roadmap.nodes}
-          edges={roadmap.edges}
-          currentNodeId={roadmap.currentNodeId}
-          mostTakenPathNodeIds={courseRoadmap?.mostTakenPathNodeIds}
+        <DeliveryTypeTabs
+          data={content}
+          assessment={assessment}
+          attempts={attempts}
+          recommended={recommendedTab}
         />
       </TabsContent>
+
+      <TabsContent value="roadmap">
+        <div className="rounded-xl border border-slate-800/60 bg-slate-900/40 p-1 backdrop-blur-[1px]">
+          <RoadmapTree
+            nodes={roadmap.nodes}
+            edges={roadmap.edges}
+            currentNodeId={roadmap.currentNodeId}
+            mostTakenPathNodeIds={courseRoadmap?.mostTakenPathNodeIds}
+          />
+        </div>
+      </TabsContent>
+
       {courseRoadmap && (
         <TabsContent value="courseRoadmap">
-          <CourseRoadmap courseSlug={courseSlug} nodes={courseRoadmap.nodes} edges={courseRoadmap.edges} mostTakenPathNodeIds={courseRoadmap.mostTakenPathNodeIds} />
+          <div className="rounded-xl border border-slate-800/60 bg-slate-900/40 p-1 backdrop-blur-[1px]">
+            <CourseRoadmap
+              courseSlug={courseSlug}
+              nodes={courseRoadmap.nodes}
+              edges={courseRoadmap.edges}
+              mostTakenPathNodeIds={courseRoadmap.mostTakenPathNodeIds}
+            />
+          </div>
         </TabsContent>
       )}
     </Tabs>

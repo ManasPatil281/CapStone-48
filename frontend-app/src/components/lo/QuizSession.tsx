@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { Assessment, AssessmentAttempt, Question } from "@/types/learning";
 import { Button } from "@/components/ui/button";
-import { Card, CardHeader, CardTitle } from "@/components/ui/card";
+import { CheckCircle, XCircle, HelpCircle, RotateCcw } from "lucide-react";
 
 interface Props {
   assessment?: Assessment & { questions: Question[] };
@@ -19,14 +19,22 @@ export function QuizSession({ assessment }: Props) {
   const [submitted, setSubmitted] = useState(false);
 
   if (!assessment) {
-    return <p className="text-sm text-slate-400">No assessment published yet.</p>;
+    return (
+      <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-slate-800 bg-slate-900/30 py-12 text-center">
+        <HelpCircle className="h-8 w-8 text-slate-700" />
+        <p className="text-sm font-medium text-slate-500">No assessment published yet.</p>
+      </div>
+    );
   }
 
-  const questions = ((assessment.questions ?? []) as unknown as QuizQuestion[]).map((question) => ({
-    ...question,
-    options: question.options ?? []
-  }));
-  const answeredCount = questions.filter((question) => Boolean(answers[question.id])).length;
+  const questions = ((assessment.questions ?? []) as unknown as QuizQuestion[]).map(
+    (question) => ({
+      ...question,
+      options: question.options ?? []
+    })
+  );
+
+  const answeredCount = questions.filter((q) => Boolean(answers[q.id])).length;
   const totalQuestions = questions.length;
   const allAnswered = totalQuestions > 0 && answeredCount === totalQuestions;
 
@@ -34,13 +42,19 @@ export function QuizSession({ assessment }: Props) {
   if (submitted) {
     questions.forEach((question) => {
       const selectedOptionId = answers[question.id];
-      const isCorrect = question.options?.some((option) => option.id === selectedOptionId && option.is_correct) ?? false;
+      const isCorrect =
+        question.options?.some((opt) => opt.id === selectedOptionId && opt.is_correct) ?? false;
       resultByQuestionId.set(question.id, isCorrect);
     });
   }
 
-  const correctCount = submitted ? Array.from(resultByQuestionId.values()).filter(Boolean).length : 0;
-  const percentage = submitted && totalQuestions > 0 ? Math.round((correctCount / totalQuestions) * 100) : 0;
+  const correctCount = submitted
+    ? Array.from(resultByQuestionId.values()).filter(Boolean).length
+    : 0;
+  const percentage =
+    submitted && totalQuestions > 0
+      ? Math.round((correctCount / totalQuestions) * 100)
+      : 0;
 
   const selectAnswer = (questionId: string, optionId: string) => {
     setAnswers((prev) => ({ ...prev, [questionId]: optionId }));
@@ -52,49 +66,137 @@ export function QuizSession({ assessment }: Props) {
   };
 
   if (totalQuestions === 0) {
-    return <p className="text-sm text-slate-400">No quiz questions available yet.</p>;
+    return (
+      <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-slate-800 bg-slate-900/30 py-12 text-center">
+        <HelpCircle className="h-8 w-8 text-slate-700" />
+        <p className="text-sm font-medium text-slate-500">No quiz questions available yet.</p>
+      </div>
+    );
   }
 
   return (
     <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>{assessment.title}</CardTitle>
-        </CardHeader>
-      </Card>
 
-      {submitted ? (
-        <div className="rounded-2xl border border-white/10 bg-slate-900/40 p-4 text-sm text-slate-200">
-          Score: <span className="font-semibold">{correctCount}/{totalQuestions}</span> ({percentage}%)
+      {/* ── Quiz header card ── */}
+      <div className="rounded-xl border border-slate-800/70 bg-slate-900/60 p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex flex-col gap-1">
+            <p className="text-[11px] font-semibold uppercase tracking-label text-slate-600">
+              Assessment
+            </p>
+            <h2 className="text-base font-semibold tracking-tight text-slate-100">
+              {assessment.title}
+            </h2>
+          </div>
+          <span className="rounded-full border border-slate-800 bg-slate-800/60 px-3 py-1 text-xs text-slate-500">
+            {totalQuestions} question{totalQuestions !== 1 ? "s" : ""}
+          </span>
         </div>
-      ) : null}
+      </div>
 
+      {/* ── Score result ── */}
+      {submitted && (
+        <div
+          className={`flex items-center gap-4 rounded-xl border p-5 ${
+            percentage >= 70
+              ? "border-mastery-mastered/20 bg-mastery-mastered/6"
+              : "border-red-500/20 bg-red-500/6"
+          }`}
+        >
+          <div
+            className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full border ${
+              percentage >= 70
+                ? "border-mastery-mastered/30 bg-mastery-mastered/12 text-mastery-mastered"
+                : "border-red-500/30 bg-red-500/12 text-red-400"
+            }`}
+          >
+            {percentage >= 70 ? (
+              <CheckCircle className="h-5 w-5" />
+            ) : (
+              <XCircle className="h-5 w-5" />
+            )}
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-slate-100">
+              Score:{" "}
+              <span className={percentage >= 70 ? "text-mastery-mastered" : "text-red-400"}>
+                {correctCount}/{totalQuestions}
+              </span>
+            </p>
+            <p className="text-xs text-slate-500">
+              {percentage}% — {percentage >= 70 ? "Well done!" : "Keep practicing"}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* ── Questions ── */}
       {questions.map((question, index) => {
         const selectedOptionId = answers[question.id];
         const isCorrect = resultByQuestionId.get(question.id);
         const showResult = submitted && typeof isCorrect === "boolean";
 
         return (
-          <Card key={question.id}>
-            <CardHeader>
-              <CardTitle className="text-base">{index + 1}. {question.question_text}</CardTitle>
-            </CardHeader>
-            <div className="space-y-2 px-6 pb-6">
+          <div
+            key={question.id}
+            className="overflow-hidden rounded-xl border border-slate-800/70 bg-slate-900/60 backdrop-blur-[1px]"
+          >
+            {/* Question header */}
+            <div className="flex items-start gap-3.5 border-b border-slate-800/60 px-5 py-4">
+              <span className="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-slate-800 text-[10px] font-bold text-slate-500">
+                {index + 1}
+              </span>
+              <p className="text-sm font-semibold leading-snug tracking-tight text-slate-100">
+                {question.question_text}
+              </p>
+            </div>
+
+            {/* Options */}
+            <div className="space-y-2 p-5">
               {question.options?.map((option, optionIndex) => {
                 const inputId = `${question.id}-${option.id}`;
                 const isSelected = selectedOptionId === option.id;
-                const optionClass = submitted
-                  ? option.is_correct
-                    ? "border-green-500/40 bg-green-500/10"
-                    : isSelected
-                    ? "border-red-500/40 bg-red-500/10"
-                    : "border-white/10 bg-slate-900/40"
-                  : isSelected
-                  ? "border-brand/40 bg-brand/10"
-                  : "border-white/10 bg-slate-900/40";
+
+                let optionStyle =
+                  "border-slate-800/70 bg-slate-800/30 hover:border-slate-700 hover:bg-slate-800/50";
+
+                if (submitted) {
+                  if (option.is_correct) {
+                    optionStyle = "border-mastery-mastered/30 bg-mastery-mastered/8";
+                  } else if (isSelected && !option.is_correct) {
+                    optionStyle = "border-red-500/30 bg-red-500/8";
+                  } else {
+                    optionStyle = "border-slate-800/40 bg-slate-800/20 opacity-50";
+                  }
+                } else if (isSelected) {
+                  optionStyle = "border-brand/40 bg-brand/8";
+                }
 
                 return (
-                  <label key={option.id} htmlFor={inputId} className={`flex cursor-pointer items-center gap-3 rounded-xl border p-3 ${optionClass}`}>
+                  <label
+                    key={option.id}
+                    htmlFor={inputId}
+                    className={`flex cursor-pointer items-center gap-3 rounded-lg border px-4 py-3 transition-colors duration-150 ${optionStyle} ${submitted ? "cursor-default" : ""}`}
+                  >
+                    {/* Custom radio visual */}
+                    <span
+                      className={`flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full border-2 transition-colors ${
+                        isSelected
+                          ? submitted && !option.is_correct
+                            ? "border-red-500 bg-red-500"
+                            : submitted && option.is_correct
+                            ? "border-mastery-mastered bg-mastery-mastered"
+                            : "border-brand bg-brand"
+                          : submitted && option.is_correct
+                          ? "border-mastery-mastered bg-mastery-mastered"
+                          : "border-slate-700 bg-transparent"
+                      }`}
+                    >
+                      {(isSelected || (submitted && option.is_correct)) && (
+                        <span className="h-1.5 w-1.5 rounded-full bg-white" />
+                      )}
+                    </span>
+
                     <input
                       id={inputId}
                       type="radio"
@@ -102,33 +204,72 @@ export function QuizSession({ assessment }: Props) {
                       checked={isSelected}
                       disabled={submitted}
                       onChange={() => selectAnswer(question.id, option.id)}
+                      className="sr-only"
                     />
-                    <span className="text-slate-200">{String.fromCharCode(65 + optionIndex)}. {option.option_text}</span>
+
+                    <span
+                      className={`text-sm leading-snug ${
+                        submitted && option.is_correct
+                          ? "font-medium text-mastery-mastered"
+                          : submitted && isSelected && !option.is_correct
+                          ? "text-red-400"
+                          : submitted
+                          ? "text-slate-500"
+                          : "text-slate-300"
+                      }`}
+                    >
+                      <span className="mr-1.5 font-mono text-[11px] text-slate-600">
+                        {String.fromCharCode(65 + optionIndex)}.
+                      </span>
+                      {option.option_text}
+                    </span>
                   </label>
                 );
               })}
 
-              {showResult ? (
-                <p className={`text-sm font-medium ${isCorrect ? "text-green-400" : "text-red-400"}`}>
+              {showResult && (
+                <div
+                  className={`flex items-center gap-1.5 pt-1 text-xs font-semibold ${
+                    isCorrect ? "text-mastery-mastered" : "text-red-400"
+                  }`}
+                >
+                  {isCorrect ? (
+                    <CheckCircle className="h-3.5 w-3.5" />
+                  ) : (
+                    <XCircle className="h-3.5 w-3.5" />
+                  )}
                   {isCorrect ? "Correct" : "Incorrect"}
-                </p>
-              ) : null}
+                </div>
+              )}
             </div>
-          </Card>
+          </div>
         );
       })}
 
-      <div className="flex gap-3">
-        <Button onClick={() => setSubmitted(true)} disabled={!allAnswered || submitted} className="bg-green-600 hover:bg-green-700">
-          Submit
+      {/* ── Actions ── */}
+      <div className="flex flex-wrap items-center gap-3 pt-1">
+        <Button
+          onClick={() => setSubmitted(true)}
+          disabled={!allAnswered || submitted}
+          className="bg-mastery-mastered text-white shadow-sm shadow-mastery-mastered/20 hover:bg-mastery-mastered/90 disabled:opacity-40"
+        >
+          Submit Quiz
         </Button>
-        <Button onClick={resetQuiz} variant="ghost" className="border border-white/20">
+        <Button
+          onClick={resetQuiz}
+          variant="ghost"
+          className="flex items-center gap-1.5 border border-slate-800 text-slate-500 hover:border-slate-700 hover:text-slate-300"
+        >
+          <RotateCcw className="h-3.5 w-3.5" />
           Reset
         </Button>
+
+        <span className="ml-auto text-xs text-slate-600">
+          {allAnswered
+            ? "All questions answered"
+            : `${totalQuestions - answeredCount} remaining`}
+        </span>
       </div>
-      <p className="text-xs text-slate-500">
-        {allAnswered ? "All questions answered." : `${totalQuestions - answeredCount} question(s) remaining before submit.`}
-      </p>
     </div>
   );
 }

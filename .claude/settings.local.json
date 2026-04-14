@@ -1,7 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python .claude/skills/ui-ux-pro-max/scripts/search.py \"adaptive learning platform edtech dark mode premium minimal\" --design-system -p \"CapStone Learning Platform\")"
+      "Bash(python .claude/skills/ui-ux-pro-max/scripts/search.py \"adaptive learning platform edtech dark mode premium minimal\" --design-system -p \"CapStone Learning Platform\")",
+      "Bash(python3 .claude/skills/ui-ux-pro-max/scripts/search.py \"edtech SaaS learning platform dark premium structured intelligent roadmap\" --design-system -p \"CapStone Learning Platform\")",
+      "Bash(py -3 .claude/skills/ui-ux-pro-max/scripts/search.py \"edtech SaaS learning platform dark premium structured intelligent roadmap\" --design-system -p \"CapStone Learning Platform\")",
+      "Bash(py -3 .claude/skills/ui-ux-pro-max/scripts/search.py \"premium dark SaaS structured minimal sophisticated\" --domain style)",
+      "Bash(py -3 .claude/skills/ui-ux-pro-max/scripts/search.py \"edtech learning platform dark structured\" --domain color)",
+      "Bash(npx tsc:*)"
     ]
   }
 }

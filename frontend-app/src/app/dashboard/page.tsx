@@ -14,7 +14,10 @@ export default async function DashboardPage() {
     redirect("/teacher");
   }
 
-  const { data: courses, error } = await supabase.from("course").select("*").order("title", { ascending: true });
+  const { data: courses, error } = await supabase
+    .from("course")
+    .select("*")
+    .order("title", { ascending: true });
 
   if (error) {
     console.error("[DashboardPage] Failed to fetch courses:", error);
@@ -23,28 +26,39 @@ export default async function DashboardPage() {
   const roleDisplay = user.role || "No Role Assigned";
   const showRoleWarning = !user.role;
   const availableCourses = (courses ?? []) as Course[];
+  const displayName = user.profile?.full_name || user.email?.split("@")[0] || user.email || "there";
 
   return (
-    <main className="min-h-screen bg-slate-950 px-6 py-8">
-      <div className="mx-auto max-w-5xl space-y-8">
-        {/* Page header */}
-        <div className="border-b border-slate-800 pb-6">
-          <p className="mb-1 text-xs font-semibold uppercase tracking-widest text-slate-500">
-            {roleDisplay}
-          </p>
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-50">
-            Welcome back,{" "}
-            <span className="text-slate-200">
-              {user.profile?.full_name || user.email?.split("@")[0] || user.email}
-            </span>
-          </h1>
+    <main className="min-h-screen bg-slate-950 px-6 py-10">
+      <div className="mx-auto max-w-5xl space-y-10">
+
+        {/* ── Welcome section ── */}
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <p className="text-[11px] font-semibold uppercase tracking-label text-slate-600">
+              {roleDisplay}
+            </p>
+            <h1 className="text-3xl font-bold tracking-tight text-slate-50">
+              Welcome back,{" "}
+              <span className="text-brand-muted">{displayName}</span>
+            </h1>
+            <p className="text-sm text-slate-500">
+              Pick up where you left off or explore new courses.
+            </p>
+          </div>
+
           {showRoleWarning && (
-            <div className="mt-3 flex items-center gap-2 rounded-lg border border-amber-800/40 bg-amber-950/20 px-3 py-2 text-sm text-amber-400">
+            <div className="flex items-start gap-3 rounded-xl border border-amber-800/30 bg-amber-950/15 px-4 py-3 text-sm text-amber-400/90">
+              <span className="mt-px h-4 w-4 flex-shrink-0 rounded-full border border-amber-500/40 bg-amber-500/10 text-center text-[10px] leading-4 font-bold">!</span>
               No user profile found — contact an administrator to set up your account.
             </div>
           )}
         </div>
 
+        {/* ── Divider ── */}
+        <div className="h-px w-full bg-slate-800/60" />
+
+        {/* ── Course catalog ── */}
         <CourseCatalog courses={availableCourses} />
       </div>
     </main>

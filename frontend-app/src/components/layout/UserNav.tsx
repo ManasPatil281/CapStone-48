@@ -20,7 +20,8 @@ export function UserNav() {
   if (isLoading) {
     return (
       <div className="flex items-center gap-2">
-        <div className="h-7 w-28 animate-pulse rounded-full bg-slate-800" />
+        <div className="h-6 w-24 animate-pulse rounded-full bg-slate-800/80" />
+        <div className="h-6 w-6 animate-pulse rounded-full bg-slate-800/80" />
       </div>
     );
   }
@@ -41,40 +42,54 @@ export function UserNav() {
   const displayName = profile?.full_name || user.email?.split("@")[0] || "User";
   const initials = displayName.slice(0, 2).toUpperCase();
 
-  const roleColor = role
-    ? {
-        ADMIN: "bg-red-500/15 text-red-400 border-red-500/25",
-        TEACHER: "bg-blue-500/15 text-blue-400 border-blue-500/25",
-        STUDENT: "bg-emerald-500/15 text-emerald-400 border-emerald-500/25"
-      }[role]
-    : "bg-slate-700/40 text-slate-400 border-slate-600/30";
-
-  const roleLabel = role || "No Role";
+  const roleMeta = role
+    ? ({
+        ADMIN: {
+          color: "bg-red-500/12 text-red-400 border-red-500/20",
+          label: "Admin"
+        },
+        TEACHER: {
+          color: "bg-violet-500/12 text-violet-400 border-violet-500/20",
+          label: "Teacher"
+        },
+        STUDENT: {
+          color: "bg-emerald-500/12 text-emerald-400 border-emerald-500/20",
+          label: "Student"
+        }
+      } as const)[role]
+    : { color: "bg-slate-700/40 text-slate-400 border-slate-600/30", label: "No Role" };
 
   return (
-    <div className="flex items-center gap-3">
-      {/* Identity */}
+    <div className="flex items-center gap-2.5">
+      {/* Identity block */}
       <div className="flex items-center gap-2.5">
-        <div className="flex h-7 w-7 select-none items-center justify-center rounded-full border border-brand/30 bg-brand/15 text-[10px] font-bold text-brand-muted">
+        {/* Avatar */}
+        <div className="flex h-7 w-7 select-none items-center justify-center rounded-full border border-brand/25 bg-brand/12 text-[10px] font-bold tracking-wide text-brand-muted">
           {initials}
         </div>
-        <span className="hidden text-xs font-medium text-slate-300 sm:inline">{displayName}</span>
-        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${roleColor}`}>
-          {roleLabel}
-        </span>
+
+        {/* Name + role */}
+        <div className="hidden flex-col items-start sm:flex">
+          <span className="text-xs font-medium leading-tight text-slate-300">{displayName}</span>
+          <span
+            className={`rounded-full border px-1.5 py-px text-[9px] font-bold uppercase tracking-label leading-none ${roleMeta.color}`}
+          >
+            {roleMeta.label}
+          </span>
+        </div>
       </div>
 
-      {/* Separator */}
-      <div className="h-4 w-px bg-slate-700/80" />
+      {/* Divider */}
+      <div className="h-4 w-px bg-slate-800" />
 
       {/* Sign out */}
       <button
         onClick={handleSignOut}
-        className="flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200"
+        className="flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs text-slate-500 transition-colors hover:bg-slate-800/70 hover:text-slate-200"
         aria-label="Sign out"
       >
         <LogOut className="h-3.5 w-3.5" />
-        <span className="hidden sm:inline">Sign Out</span>
+        <span className="hidden sm:inline">Sign out</span>
       </button>
     </div>
   );
