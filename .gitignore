@@ -2,3 +2,18 @@
 /test_endpoints.http
 /venv
 /__pycache__
+
+# Claude AI skill - ignore Python cache only
+.claude/**/__pycache__/
+
+# Frontend app (Next.js)
+/frontend-app/node_modules
+/frontend-app/.next
+/frontend-app/out
+/frontend-app/.env.local
+/frontend-app/.env.development.local
+/frontend-app/.env.test.local
+/frontend-app/.env.production.local
+/frontend-app/npm-debug.log*
+/frontend-app/yarn-debug.log*
+/frontend-app/yarn-error.log*

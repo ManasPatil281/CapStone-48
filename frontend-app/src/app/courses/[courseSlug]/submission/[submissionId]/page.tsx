@@ -1,8 +1,9 @@
 import { notFound } from "next/navigation";
+import Link from "next/link";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { LOHeader } from "@/components/lo/LOHeader";
 import { LODetailTabs } from "@/components/lo/LODetailTabs";
-import type { AssessmentAttempt, ContentTabData, LearningObject, LearningObjectDetail } from "@/types/learning";
+import type { ContentTabData, LearningObject, LearningObjectContent, LearningObjectDetail } from "@/types/learning";
 import type { RoadmapEdge, RoadmapNode } from "@/components/lo/RoadmapTree";
 
 interface PageProps {
@@ -94,7 +95,7 @@ export default async function SubmissionDetailPage({ params }: PageProps) {
 
   const lo = submission.learning_object;
 
-  const [prerequisiteEdgesRes, dependentEdgesRes, attemptsRes] = await Promise.all([
+  const [prerequisiteEdgesRes, dependentEdgesRes, submissionAssessmentRes] = await Promise.all([
     supabase
       .from("teacher_lo_submission_edge")
       .select("source_lo_id, teacher_lo_submission!inner(status)")
@@ -105,8 +106,59 @@ export default async function SubmissionDetailPage({ params }: PageProps) {
       .select("target_lo_id, teacher_lo_submission!inner(status)")
       .eq("source_lo_id", lo.id)
       .eq("teacher_lo_submission.status", "approved"),
-    userId ? supabase.from("user_assessment_attempt").select("*").eq("user_id", userId).order("attempt_number", { ascending: false }) : Promise.resolve({ data: [], error: null })
+    supabase.from("teacher_lo_submission_assessment").select("*").eq("submission_id", submission.id).maybeSingle()
   ]);
+
+  if (submissionAssessmentRes.error) {
+    console.error("[SubmissionDetailPage] Failed to fetch submission assessment:", submissionAssessmentRes.error);
+  }
+
+  let submissionAssessment: (LearningObjectDetail["assessment"] & { questions: any[] }) | undefined;
+
+  if (submissionAssessmentRes.data) {
+    const assessmentRow = submissionAssessmentRes.data as { id: string; title: string; pass_percentage: number; max_attempts: number };
+    const { data: questionRows, error: questionError } = await supabase
+      .from("teacher_lo_submission_question")
+      .select("*")
+      .eq("assessment_id", assessmentRow.id);
+
+    if (questionError) {
+      console.error("[SubmissionDetailPage] Failed to fetch submission assessment questions:", questionError);
+    }
+
+    const questions = (questionRows ?? []) as Array<{ id: string; question_text: string; question_type: string; marks: number }>;
+    const questionIds = questions.map((question) => question.id);
+
+    let optionRows: Array<{ id: string; question_id: string; option_text: string; is_correct: boolean }> = [];
+
+    if (questionIds.length > 0) {
+      const { data: optionsData, error: optionError } = await supabase
+        .from("teacher_lo_submission_question_option")
+        .select("*")
+        .in("question_id", questionIds);
+
+      if (optionError) {
+        console.error("[SubmissionDetailPage] Failed to fetch submission assessment options:", optionError);
+      }
+
+      optionRows = (optionsData ?? []) as Array<{ id: string; question_id: string; option_text: string; is_correct: boolean }>;
+    }
+
+    const optionsByQuestionId = new Map<string, Array<{ id: string; option_text: string; is_correct: boolean }>>();
+    optionRows.forEach((option) => {
+      const list = optionsByQuestionId.get(option.question_id) ?? [];
+      list.push({ id: option.id, option_text: option.option_text, is_correct: option.is_correct });
+      optionsByQuestionId.set(option.question_id, list);
+    });
+
+    submissionAssessment = {
+      ...(assessmentRow as any),
+      questions: questions.map((question) => ({
+        ...question,
+        options: optionsByQuestionId.get(question.id) ?? []
+      }))
+    } as LearningObjectDetail["assessment"] & { questions: any[] };
+  }
 
   const prerequisiteLoIds = Array.from(new Set((prerequisiteEdgesRes.data ?? []).map((edge: any) => edge.source_lo_id).filter(Boolean)));
   const dependentLoIds = Array.from(new Set((dependentEdgesRes.data ?? []).map((edge: any) => edge.target_lo_id).filter(Boolean)));
@@ -122,7 +174,7 @@ export default async function SubmissionDetailPage({ params }: PageProps) {
     deliveryTypes: {},
     prerequisites: (prereqLosRes.data as LearningObject[] | null) ?? [],
     dependents: (dependentLosRes.data as LearningObject[] | null) ?? [],
-    assessment: undefined,
+    assessment: submissionAssessment,
     progress: undefined
   };
 
@@ -140,8 +192,9 @@ export default async function SubmissionDetailPage({ params }: PageProps) {
     loDetail.progress = progressMap.get(loDetail.id);
   }
 
-  const contentTabs = mapContentTabs(loDetail.contents);
-  const recommendedTab = pickRecommendedTab(loDetail.contents);
+  const contentBlocks = withQuizBlock(loDetail.contents, loDetail.assessment, loDetail.id);
+  const contentTabs = mapContentTabs(contentBlocks);
+  const recommendedTab = pickRecommendedTab(contentBlocks);
 
   const roadmap = buildRoadmap({
     lo: loDetail,
@@ -196,10 +249,17 @@ export default async function SubmissionDetailPage({ params }: PageProps) {
     courseRoadmapData = { nodes, edges };
   }
 
-  const attempts: AssessmentAttempt[] = (attemptsRes.data as AssessmentAttempt[] | null) ?? [];
-
   return (
     <div className="space-y-10 p-6">
+      <div>
+        <Link
+          href={`/courses/${params.courseSlug}`}
+          className="inline-flex items-center text-sm text-slate-400 hover:text-slate-200 hover:underline"
+        >
+          {"<- Back to "}
+          {course.title || course.slug.toUpperCase()}
+        </Link>
+      </div>
       <LOHeader lo={loDetail} />
       <div className="rounded-2xl border border-white/10 bg-slate-900/40 p-4 text-sm text-slate-300">
         <p>
@@ -215,22 +275,65 @@ export default async function SubmissionDetailPage({ params }: PageProps) {
         courseSlug={params.courseSlug}
         courseRoadmap={courseRoadmapData}
         assessment={loDetail.assessment}
-        attempts={attempts}
         recommendedTab={recommendedTab}
       />
     </div>
   );
 }
 
-function mapContentTabs(contents: LearningObjectDetail["contents"]): ContentTabData {
+function withQuizBlock(
+  contents: LearningObjectDetail["contents"],
+  assessment: LearningObjectDetail["assessment"],
+  learningObjectId: string
+): LearningObjectContent[] {
+  if (!assessment) {
+    return contents;
+  }
+
+  const maxSequence = contents.reduce((max, item) => Math.max(max, item.sequence_order ?? 0), 0);
+  const quizBlock: LearningObjectContent = {
+    id: `quiz-${assessment.id}`,
+    learning_object_id: learningObjectId,
+    delivery_type_id: "QUIZ",
+    title: assessment.title || "Quiz",
+    content_json: {},
+    sequence_order: maxSequence + 1,
+    is_active: true,
+    delivery_type: { id: "QUIZ", code: "QUIZ", name: "Quiz" }
+  };
+
+  return [...contents, quizBlock];
+}
+
+function mapContentTabs(contents: LearningObjectContent[]): ContentTabData {
   return contents.reduce<ContentTabData>((acc, item) => {
     const code = item.delivery_type?.code;
+    acc.blocks = acc.blocks ?? [];
+    acc.blocks.push(item);
     const assign = (key: keyof ContentTabData) => {
       acc[key] = acc[key] ?? [];
       acc[key]!.push(item);
     };
 
     switch (code) {
+      case "CONCEPT_NOTES":
+        assign("conceptNotes");
+        break;
+      case "FLOWCHART":
+        assign("flowchart");
+        break;
+      case "VISUAL_EXPLANATION":
+        assign("visualExplanation");
+        break;
+      case "WORKED_EXAMPLE":
+        assign("workedExample");
+        break;
+      case "PRACTICE_SET":
+        assign("practiceSet");
+        break;
+      case "REVISION_SHEET":
+        assign("revisionSheet");
+        break;
       case "VIDEO":
         assign("video");
         break;
@@ -244,6 +347,7 @@ function mapContentTabs(contents: LearningObjectDetail["contents"]): ContentTabD
         assign("playground");
         break;
       case "FLASHCARD":
+      case "FLASHCARDS":
         assign("flashcards");
         break;
       default:
@@ -253,11 +357,34 @@ function mapContentTabs(contents: LearningObjectDetail["contents"]): ContentTabD
   }, {} as ContentTabData);
 }
 
-function pickRecommendedTab(contents: LearningObjectDetail["contents"]) {
-  const priority = ["PLAYGROUND", "VIDEO", "READING_NOTES", "READING_PDF"];
+function pickRecommendedTab(contents: LearningObjectContent[]) {
+  const priority = [
+    "CONCEPT_NOTES",
+    "WORKED_EXAMPLE",
+    "PRACTICE_SET",
+    "REVISION_SHEET",
+    "FLOWCHART",
+    "VISUAL_EXPLANATION",
+    "PLAYGROUND",
+    "VIDEO",
+    "READING_NOTES",
+    "READING_PDF"
+  ];
   for (const code of priority) {
     if (contents.some((content) => content.delivery_type?.code === code)) {
       switch (code) {
+        case "CONCEPT_NOTES":
+          return "conceptNotes";
+        case "WORKED_EXAMPLE":
+          return "workedExample";
+        case "PRACTICE_SET":
+          return "practiceSet";
+        case "REVISION_SHEET":
+          return "revisionSheet";
+        case "FLOWCHART":
+          return "flowchart";
+        case "VISUAL_EXPLANATION":
+          return "visualExplanation";
         case "PLAYGROUND":
           return "playground";
         case "VIDEO":

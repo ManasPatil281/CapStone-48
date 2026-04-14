@@ -41,11 +41,18 @@ export interface LearningObjectDetail extends LearningObject {
 }
 
 export interface ContentTabData {
+  blocks?: LearningObjectContent[];
   video?: LearningObjectContent[];
   pdf?: LearningObjectContent[];
   notes?: LearningObjectContent[];
   flashcards?: LearningObjectContent[];
   playground?: LearningObjectContent[];
+  conceptNotes?: LearningObjectContent[];
+  flowchart?: LearningObjectContent[];
+  visualExplanation?: LearningObjectContent[];
+  workedExample?: LearningObjectContent[];
+  practiceSet?: LearningObjectContent[];
+  revisionSheet?: LearningObjectContent[];
 }
 
 export type DeliveryPreference = {
@@ -71,6 +78,35 @@ export type FlashcardContent = {
   cards: { front: string; back: string }[];
 };
 
+export type ConceptNotesContent = {
+  markdown: string;
+};
+
+export type FlowchartContent = {
+  image_url: string;
+  caption?: string;
+};
+
+export type VisualExplanationContent = {
+  image_url: string;
+  caption?: string;
+  text?: string;
+};
+
+export type WorkedExampleContent = {
+  problem: string;
+  solution: string;
+  explanation: string;
+};
+
+export type PracticeSetContent = {
+  questions: string[];
+};
+
+export type RevisionSheetContent = {
+  summary: string;
+};
+
 export type VideoContent = {
   url: string;
   duration_seconds?: number;
@@ -86,4 +122,16 @@ export type PdfContent = {
   page_count?: number;
 };
 
-export type ContentJSON = VideoContent | NoteContent | PdfContent | FlashcardContent | PlaygroundContent | Json;
+export type ContentJSON =
+  | VideoContent
+  | NoteContent
+  | PdfContent
+  | FlashcardContent
+  | PlaygroundContent
+  | ConceptNotesContent
+  | FlowchartContent
+  | VisualExplanationContent
+  | WorkedExampleContent
+  | PracticeSetContent
+  | RevisionSheetContent
+  | Json;

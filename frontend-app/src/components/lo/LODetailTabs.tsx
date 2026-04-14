@@ -6,7 +6,6 @@ import type { RoadmapEdge, RoadmapNode } from "@/components/lo/RoadmapTree";
 import { DeliveryTypeTabs } from "@/components/lo/DeliveryTypeTabs";
 import { RoadmapTree } from "@/components/lo/RoadmapTree";
 import { CourseRoadmap } from "@/components/lo/CourseRoadmap";
-import { QuizSession } from "@/components/lo/QuizSession";
 
 interface Props {
   content: ContentTabData;
@@ -33,10 +32,9 @@ export function LODetailTabs({ content, courseSlug = "dsa", roadmap, courseRoadm
         <TabsTrigger value="content">Content</TabsTrigger>
         <TabsTrigger value="roadmap">Module Roadmap</TabsTrigger>
         {courseRoadmap && <TabsTrigger value="courseRoadmap">📚 Course Roadmap</TabsTrigger>}
-        <TabsTrigger value="quiz">Quiz</TabsTrigger>
       </TabsList>
       <TabsContent value="content">
-        <DeliveryTypeTabs data={content} recommended={recommendedTab} />
+        <DeliveryTypeTabs data={content} assessment={assessment} attempts={attempts} recommended={recommendedTab} />
       </TabsContent>
       <TabsContent value="roadmap">
         <RoadmapTree
@@ -51,9 +49,6 @@ export function LODetailTabs({ content, courseSlug = "dsa", roadmap, courseRoadm
           <CourseRoadmap courseSlug={courseSlug} nodes={courseRoadmap.nodes} edges={courseRoadmap.edges} mostTakenPathNodeIds={courseRoadmap.mostTakenPathNodeIds} />
         </TabsContent>
       )}
-      <TabsContent value="quiz">
-        <QuizSession assessment={assessment} attempts={attempts} />
-      </TabsContent>
     </Tabs>
   );
 }

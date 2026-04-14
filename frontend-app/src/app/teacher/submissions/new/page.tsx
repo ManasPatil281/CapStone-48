@@ -15,11 +15,57 @@ type Course = { id: string; title: string };
 type LO = { id: string; title: string; slug: string };
 type DeliveryType = { id: string; code: string; name: string };
 
+type FlashcardPair = {
+  front: string;
+  back: string;
+};
+
+type QuizQuestionDraft = {
+  questionText: string;
+  options: [string, string, string, string];
+  correctOptionIndex: number | null;
+};
+
 type ContentItem = {
   deliveryTypeId: string;
   deliveryTypeCode: string;
   title: string;
-  url: string;
+  text: string;
+  imageUrl: string;
+  caption: string;
+  problem: string;
+  solution: string;
+  explanation: string;
+  questionsText: string;
+  language: string;
+  starterCode: string;
+  rawJson: string;
+  flashcards: FlashcardPair[];
+  quizQuestions: QuizQuestionDraft[];
+};
+
+const EMPTY_QUIZ_QUESTION: QuizQuestionDraft = {
+  questionText: "",
+  options: ["", "", "", ""],
+  correctOptionIndex: null,
+};
+
+const EMPTY_CONTENT_ITEM: ContentItem = {
+  deliveryTypeId: "",
+  deliveryTypeCode: "",
+  title: "",
+  text: "",
+  imageUrl: "",
+  caption: "",
+  problem: "",
+  solution: "",
+  explanation: "",
+  questionsText: "",
+  language: "javascript",
+  starterCode: "",
+  rawJson: "",
+  flashcards: [{ front: "", back: "" }],
+  quizQuestions: [{ ...EMPTY_QUIZ_QUESTION }],
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -67,7 +113,7 @@ export default function NewSubmissionPage() {
 
   // ── Content
   const [contentItems, setContentItems] = useState<ContentItem[]>([
-    { deliveryTypeId: "", deliveryTypeCode: "", title: "", url: "" },
+    { ...EMPTY_CONTENT_ITEM },
   ]);
 
   // ── Load remote data once
@@ -84,7 +130,7 @@ export default function NewSubmissionPage() {
         supabase
           .from("delivery_type")
           .select("id, code, name")
-          .in("code", ["VIDEO", "READING_PDF"]),
+          .order("name"),
       ]);
 
       if (coursesRes.error) console.error("[NewSubmission] courses:", coursesRes.error);
@@ -121,16 +167,205 @@ export default function NewSubmissionPage() {
       if (field === "deliveryTypeId") {
         const dt = deliveryTypes.find((d) => d.id === value);
         next[index] = {
-          ...next[index],
+          ...EMPTY_CONTENT_ITEM,
+          title: next[index].title,
           deliveryTypeId: value,
           deliveryTypeCode: dt?.code ?? "",
-          url: "", // reset URL when type changes
         };
       } else {
         next[index] = { ...next[index], [field]: value };
       }
       return next;
     });
+  }
+
+  function updateFlashcard(index: number, cardIndex: number, field: keyof FlashcardPair, value: string) {
+    setContentItems((prev) => {
+      const next = [...prev];
+      const cards = [...next[index].flashcards];
+      cards[cardIndex] = { ...cards[cardIndex], [field]: value };
+      next[index] = { ...next[index], flashcards: cards };
+      return next;
+    });
+  }
+
+  function addFlashcard(index: number) {
+    setContentItems((prev) => {
+      const next = [...prev];
+      next[index] = {
+        ...next[index],
+        flashcards: [...next[index].flashcards, { front: "", back: "" }],
+      };
+      return next;
+    });
+  }
+
+  function removeFlashcard(index: number, cardIndex: number) {
+    setContentItems((prev) => {
+      const next = [...prev];
+      const cards = next[index].flashcards.filter((_, idx) => idx !== cardIndex);
+      next[index] = {
+        ...next[index],
+        flashcards: cards.length > 0 ? cards : [{ front: "", back: "" }],
+      };
+      return next;
+    });
+  }
+
+  function updateQuizQuestion(index: number, questionIndex: number, value: string) {
+    setContentItems((prev) => {
+      const next = [...prev];
+      const questions = [...next[index].quizQuestions];
+      questions[questionIndex] = { ...questions[questionIndex], questionText: value };
+      next[index] = { ...next[index], quizQuestions: questions };
+      return next;
+    });
+  }
+
+  function updateQuizOption(index: number, questionIndex: number, optionIndex: number, value: string) {
+    setContentItems((prev) => {
+      const next = [...prev];
+      const questions = [...next[index].quizQuestions];
+      const options = [...questions[questionIndex].options] as [string, string, string, string];
+      options[optionIndex] = value;
+      questions[questionIndex] = { ...questions[questionIndex], options };
+      next[index] = { ...next[index], quizQuestions: questions };
+      return next;
+    });
+  }
+
+  function setQuizCorrectOption(index: number, questionIndex: number, optionIndex: number) {
+    setContentItems((prev) => {
+      const next = [...prev];
+      const questions = [...next[index].quizQuestions];
+      questions[questionIndex] = { ...questions[questionIndex], correctOptionIndex: optionIndex };
+      next[index] = { ...next[index], quizQuestions: questions };
+      return next;
+    });
+  }
+
+  function addQuizQuestion(index: number) {
+    setContentItems((prev) => {
+      const next = [...prev];
+      next[index] = {
+        ...next[index],
+        quizQuestions: [...next[index].quizQuestions, { ...EMPTY_QUIZ_QUESTION }],
+      };
+      return next;
+    });
+  }
+
+  function removeQuizQuestion(index: number, questionIndex: number) {
+    setContentItems((prev) => {
+      const next = [...prev];
+      const questions = next[index].quizQuestions.filter((_, idx) => idx !== questionIndex);
+      next[index] = {
+        ...next[index],
+        quizQuestions: questions.length > 0 ? questions : [{ ...EMPTY_QUIZ_QUESTION }],
+      };
+      return next;
+    });
+  }
+
+  function buildContentJson(item: ContentItem) {
+    const code = item.deliveryTypeCode;
+    const parsedQuestions = item.questionsText
+      .split(/\r?\n/)
+      .map((q) => q.trim())
+      .filter(Boolean);
+
+    switch (code) {
+      case "CONCEPT_NOTES":
+        return { content_json: { markdown: item.text }, defaultTitle: "Concept Notes" };
+      case "FLOWCHART":
+        return { content_json: { image_url: item.imageUrl, caption: item.caption || undefined }, defaultTitle: "Flowchart" };
+      case "VISUAL_EXPLANATION":
+        return {
+          content_json: { image_url: item.imageUrl, caption: item.caption || undefined, text: item.text || undefined },
+          defaultTitle: "Visual Explanation",
+        };
+      case "WORKED_EXAMPLE":
+        return {
+          content_json: { problem: item.problem, solution: item.solution, explanation: item.explanation },
+          defaultTitle: "Worked Example",
+        };
+      case "PRACTICE_SET":
+        return { content_json: { questions: parsedQuestions }, defaultTitle: "Practice Set" };
+      case "FLASHCARDS":
+      case "FLASHCARD": {
+        const cards = item.flashcards
+          .map((card) => ({ front: card.front.trim(), back: card.back.trim() }))
+          .filter((card) => card.front || card.back);
+        return { content_json: { cards }, defaultTitle: "Flashcards" };
+      }
+      case "REVISION_SHEET":
+        return { content_json: { summary: item.text }, defaultTitle: "Revision Sheet" };
+      case "VIDEO":
+        return { content_json: { url: item.imageUrl }, defaultTitle: "Video" };
+      case "READING_PDF":
+        return { content_json: { pdf_url: item.imageUrl }, defaultTitle: "PDF" };
+      case "READING_NOTES":
+        return { content_json: { markdown: item.text }, defaultTitle: "Reading Notes" };
+      case "PLAYGROUND":
+        return {
+          content_json: {
+            language: item.language || "javascript",
+            starter_code: item.starterCode,
+            practices: parsedQuestions.map((question, idx) => ({
+              id: `${idx + 1}`,
+              title: `Practice ${idx + 1}`,
+              description: question,
+            })),
+          },
+          defaultTitle: "Playground",
+        };
+      default:
+        if (!item.rawJson.trim()) return null;
+        try {
+          return { content_json: JSON.parse(item.rawJson), defaultTitle: item.deliveryTypeCode || "Content" };
+        } catch {
+          throw new Error(`Invalid JSON for content type ${item.deliveryTypeCode || "unknown"}`);
+        }
+    }
+  }
+
+  function validateQuizContent(items: ContentItem[]) {
+    const quizItems = items.filter((item) => item.deliveryTypeCode === "QUIZ");
+
+    if (quizItems.length === 0) {
+      return null;
+    }
+
+    if (quizItems.length > 1) {
+      throw new Error("Please keep only one QUIZ content block per submission.");
+    }
+
+    const quizItem = quizItems[0];
+    const questions = quizItem.quizQuestions.filter((question) => question.questionText.trim() || question.options.some((option) => option.trim()));
+
+    if (questions.length === 0) {
+      throw new Error("QUIZ requires at least one question.");
+    }
+
+    questions.forEach((question, questionIndex) => {
+      if (!question.questionText.trim()) {
+        throw new Error(`Quiz question ${questionIndex + 1} is missing question text.`);
+      }
+      if (question.options.length !== 4) {
+        throw new Error(`Quiz question ${questionIndex + 1} must have exactly 4 options.`);
+      }
+      if (question.options.some((option) => !option.trim())) {
+        throw new Error(`Quiz question ${questionIndex + 1} has empty options. Fill all 4 options.`);
+      }
+      if (question.correctOptionIndex === null || question.correctOptionIndex < 0 || question.correctOptionIndex > 3) {
+        throw new Error(`Quiz question ${questionIndex + 1} must have one correct option selected.`);
+      }
+    });
+
+    return {
+      item: quizItem,
+      questions,
+    };
   }
 
   // ── Submit
@@ -205,17 +440,19 @@ export default function NewSubmissionPage() {
       if (subErr) throw subErr;
       const submissionId = submission!.id;
 
-      // 3. Create content rows (skip items with no type or URL)
-      const validContent = contentItems.filter(
-        (c) => c.deliveryTypeId && c.url.trim()
+      // 3. Create content rows for non-quiz types
+      const quizPayload = validateQuizContent(contentItems);
+
+      const nonQuizItems = contentItems.filter(
+        (item) => item.deliveryTypeId && item.deliveryTypeCode !== "QUIZ"
       );
 
-      for (let i = 0; i < validContent.length; i++) {
-        const item = validContent[i];
-        const content_json =
-          item.deliveryTypeCode === "VIDEO"
-            ? { url: item.url.trim() }
-            : { pdf_url: item.url.trim() };
+      let sequenceOrder = 1;
+      for (const item of nonQuizItems) {
+        const built = buildContentJson(item);
+        if (!built) {
+          continue;
+        }
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { error: contentErr } = await (supabase as any)
@@ -223,16 +460,66 @@ export default function NewSubmissionPage() {
           .insert({
             submission_id: submissionId,
             delivery_type_id: item.deliveryTypeId,
-            title: item.title.trim() || (item.deliveryTypeCode === "VIDEO" ? "Video" : "PDF"),
-            content_json,
-            sequence_order: i + 1,
+            title: item.title.trim() || built.defaultTitle,
+            content_json: built.content_json,
+            sequence_order: sequenceOrder,
             is_active: true,
           });
 
         if (contentErr) throw contentErr;
+        sequenceOrder += 1;
       }
 
-      // 4. Create prerequisite edges: prereq_lo → current_lo
+      // 4. Create quiz assessment rows (if QUIZ block is present)
+      if (quizPayload) {
+        const assessmentTitle = `${(submissionTitle || loTitle || "Submission").trim()} Quiz`;
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: assessmentRow, error: assessmentErr } = await (supabase as any)
+          .from("teacher_lo_submission_assessment")
+          .insert({
+            submission_id: submissionId,
+            title: assessmentTitle,
+            pass_percentage: 70,
+            max_attempts: 3,
+          })
+          .select("id")
+          .single();
+
+        if (assessmentErr) throw assessmentErr;
+
+        for (const question of quizPayload.questions) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: questionRow, error: questionErr } = await (supabase as any)
+            .from("teacher_lo_submission_question")
+            .insert({
+              assessment_id: assessmentRow.id,
+              question_type: "MCQ",
+              question_text: question.questionText.trim(),
+              metadata_json: {},
+              marks: 1,
+            })
+            .select("id")
+            .single();
+
+          if (questionErr) throw questionErr;
+
+          const optionRows = question.options.map((optionText, optionIndex) => ({
+            question_id: questionRow.id,
+            option_text: optionText.trim(),
+            is_correct: question.correctOptionIndex === optionIndex,
+          }));
+
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { error: optionErr } = await (supabase as any)
+            .from("teacher_lo_submission_question_option")
+            .insert(optionRows);
+
+          if (optionErr) throw optionErr;
+        }
+      }
+
+      // 5. Create prerequisite edges: prereq_lo → current_lo
       for (const prereqId of prerequisites) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { error: edgeErr } = await (supabase as any)
@@ -245,7 +532,7 @@ export default function NewSubmissionPage() {
         if (edgeErr) throw edgeErr;
       }
 
-      // 5. Create post-requisite edges: current_lo → postreq_lo
+      // 6. Create post-requisite edges: current_lo → postreq_lo
       for (const postreqId of postrequisites) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { error: edgeErr } = await (supabase as any)
@@ -261,6 +548,7 @@ export default function NewSubmissionPage() {
       setSuccess(true);
       setTimeout(() => router.push("/teacher"), 1800);
     } catch (err: unknown) {
+      console.error("[NewSubmission] failed to create submission:", err);
       const msg = err instanceof Error ? err.message : "Something went wrong. Please try again.";
       setError(msg);
     } finally {
@@ -561,10 +849,8 @@ export default function NewSubmissionPage() {
                   <label className={labelCls}>Title</label>
                   <Input
                     placeholder={
-                      item.deliveryTypeCode === "VIDEO"
-                        ? "e.g. Lecture Video"
-                        : item.deliveryTypeCode === "READING_PDF"
-                        ? "e.g. Reference Material"
+                      item.deliveryTypeCode === "QUIZ"
+                        ? "e.g. Unit Quiz"
                         : "Content title…"
                     }
                     value={item.title}
@@ -575,38 +861,260 @@ export default function NewSubmissionPage() {
                   />
                 </div>
 
+                {(item.deliveryTypeCode === "CONCEPT_NOTES" || item.deliveryTypeCode === "READING_NOTES" || item.deliveryTypeCode === "REVISION_SHEET") && (
+                  <div>
+                    <label className={labelCls}>
+                      {item.deliveryTypeCode === "REVISION_SHEET" ? "Summary" : "Text"}
+                    </label>
+                    <textarea
+                      className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[160px] resize-y"
+                      placeholder="Write content here..."
+                      value={item.text}
+                      onChange={(e) => updateContentItem(index, "text", e.target.value)}
+                    />
+                  </div>
+                )}
+
+                {(item.deliveryTypeCode === "FLOWCHART" || item.deliveryTypeCode === "VISUAL_EXPLANATION") && (
+                  <>
+                    <div>
+                      <label className={labelCls}>Image URL</label>
+                      <Input
+                        type="url"
+                        placeholder="https://..."
+                        value={item.imageUrl}
+                        onChange={(e) => updateContentItem(index, "imageUrl", e.target.value)}
+                        className="bg-slate-800 border-slate-700"
+                      />
+                    </div>
+                    <div>
+                      <label className={labelCls}>Caption (optional)</label>
+                      <Input
+                        placeholder="Optional caption"
+                        value={item.caption}
+                        onChange={(e) => updateContentItem(index, "caption", e.target.value)}
+                        className="bg-slate-800 border-slate-700"
+                      />
+                    </div>
+                    {item.deliveryTypeCode === "VISUAL_EXPLANATION" && (
+                      <div>
+                        <label className={labelCls}>Explanation text (optional)</label>
+                        <textarea
+                          className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[120px] resize-y"
+                          placeholder="Describe the visual"
+                          value={item.text}
+                          onChange={(e) => updateContentItem(index, "text", e.target.value)}
+                        />
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {item.deliveryTypeCode === "WORKED_EXAMPLE" && (
+                  <div className="space-y-3">
+                    <div>
+                      <label className={labelCls}>Problem</label>
+                      <textarea
+                        className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[90px] resize-y"
+                        value={item.problem}
+                        onChange={(e) => updateContentItem(index, "problem", e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label className={labelCls}>Solution</label>
+                      <textarea
+                        className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[90px] resize-y"
+                        value={item.solution}
+                        onChange={(e) => updateContentItem(index, "solution", e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label className={labelCls}>Explanation</label>
+                      <textarea
+                        className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[90px] resize-y"
+                        value={item.explanation}
+                        onChange={(e) => updateContentItem(index, "explanation", e.target.value)}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {(item.deliveryTypeCode === "PRACTICE_SET" || item.deliveryTypeCode === "PLAYGROUND") && (
+                  <div>
+                    <label className={labelCls}>Questions (one per line)</label>
+                    <textarea
+                      className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[140px] resize-y"
+                      placeholder="Question 1&#10;Question 2&#10;Question 3"
+                      value={item.questionsText}
+                      onChange={(e) => updateContentItem(index, "questionsText", e.target.value)}
+                    />
+                  </div>
+                )}
+
+                {item.deliveryTypeCode === "PLAYGROUND" && (
+                  <div className="space-y-3">
+                    <div>
+                      <label className={labelCls}>Language</label>
+                      <Input
+                        placeholder="javascript"
+                        value={item.language}
+                        onChange={(e) => updateContentItem(index, "language", e.target.value)}
+                        className="bg-slate-800 border-slate-700"
+                      />
+                    </div>
+                    <div>
+                      <label className={labelCls}>Starter Code</label>
+                      <textarea
+                        className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[160px] resize-y font-mono"
+                        value={item.starterCode}
+                        onChange={(e) => updateContentItem(index, "starterCode", e.target.value)}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {(item.deliveryTypeCode === "FLASHCARDS" || item.deliveryTypeCode === "FLASHCARD") && (
+                  <div className="space-y-3">
+                    <label className={labelCls}>Flashcard Pairs</label>
+                    {item.flashcards.map((card, cardIndex) => (
+                      <div key={cardIndex} className="rounded-md border border-slate-700 bg-slate-900/40 p-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs text-slate-400">Card {cardIndex + 1}</p>
+                          {item.flashcards.length > 1 && (
+                            <button
+                              type="button"
+                              className="text-xs text-red-400 hover:text-red-300"
+                              onClick={() => removeFlashcard(index, cardIndex)}
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                        <Input
+                          placeholder="Question / Front"
+                          value={card.front}
+                          onChange={(e) => updateFlashcard(index, cardIndex, "front", e.target.value)}
+                          className="bg-slate-800 border-slate-700"
+                        />
+                        <Input
+                          placeholder="Answer / Back"
+                          value={card.back}
+                          onChange={(e) => updateFlashcard(index, cardIndex, "back", e.target.value)}
+                          className="bg-slate-800 border-slate-700"
+                        />
+                      </div>
+                    ))}
+                    <Button type="button" variant="ghost" onClick={() => addFlashcard(index)}>
+                      + Add flashcard
+                    </Button>
+                  </div>
+                )}
+
+                {item.deliveryTypeCode === "QUIZ" && (
+                  <div className="space-y-3">
+                    <p className="text-xs text-slate-400">MCQ Builder (4 options per question)</p>
+                    {item.quizQuestions.map((question, questionIndex) => (
+                      <div key={questionIndex} className="rounded-md border border-slate-700 bg-slate-900/40 p-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <p className="text-sm text-slate-300">Question {questionIndex + 1}</p>
+                          {item.quizQuestions.length > 1 && (
+                            <button
+                              type="button"
+                              className="text-xs text-red-400 hover:text-red-300"
+                              onClick={() => removeQuizQuestion(index, questionIndex)}
+                            >
+                              Delete question
+                            </button>
+                          )}
+                        </div>
+                        <textarea
+                          className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[80px] resize-y"
+                          placeholder="Question text"
+                          value={question.questionText}
+                          onChange={(e) => updateQuizQuestion(index, questionIndex, e.target.value)}
+                        />
+
+                        {question.options.map((option, optionIndex) => (
+                          <label key={optionIndex} className="flex items-center gap-2">
+                            <input
+                              type="radio"
+                              name={`quiz-correct-${index}-${questionIndex}`}
+                              checked={question.correctOptionIndex === optionIndex}
+                              onChange={() => setQuizCorrectOption(index, questionIndex, optionIndex)}
+                              className="accent-indigo-500"
+                            />
+                            <Input
+                              placeholder={`Option ${optionIndex + 1}`}
+                              value={option}
+                              onChange={(e) => updateQuizOption(index, questionIndex, optionIndex, e.target.value)}
+                              className="bg-slate-800 border-slate-700"
+                            />
+                          </label>
+                        ))}
+                      </div>
+                    ))}
+                    <Button type="button" variant="ghost" onClick={() => addQuizQuestion(index)}>
+                      + Add question
+                    </Button>
+                  </div>
+                )}
+
                 {item.deliveryTypeCode === "VIDEO" && (
                   <div>
-                    <label className={labelCls}>YouTube URL *</label>
+                    <label className={labelCls}>YouTube URL</label>
                     <Input
                       type="url"
-                      placeholder="https://www.youtube.com/watch?v=…"
-                      value={item.url}
+                      placeholder="https://www.youtube.com/watch?v=..."
+                      value={item.imageUrl}
                       onChange={(e) =>
-                        updateContentItem(index, "url", e.target.value)
+                        updateContentItem(index, "imageUrl", e.target.value)
                       }
                       className="bg-slate-800 border-slate-700"
                     />
-                    <p className="mt-1 text-xs text-slate-500">
-                      Supports youtube.com/watch, youtu.be, and /shorts links
-                    </p>
                   </div>
                 )}
 
                 {item.deliveryTypeCode === "READING_PDF" && (
                   <div>
-                    <label className={labelCls}>PDF URL *</label>
+                    <label className={labelCls}>PDF URL</label>
                     <Input
                       type="url"
-                      placeholder="https://…/document.pdf"
-                      value={item.url}
+                      placeholder="https://.../document.pdf"
+                      value={item.imageUrl}
                       onChange={(e) =>
-                        updateContentItem(index, "url", e.target.value)
+                        updateContentItem(index, "imageUrl", e.target.value)
                       }
                       className="bg-slate-800 border-slate-700"
                     />
                   </div>
                 )}
+
+                {item.deliveryTypeCode &&
+                  ![
+                    "CONCEPT_NOTES",
+                    "READING_NOTES",
+                    "REVISION_SHEET",
+                    "FLOWCHART",
+                    "VISUAL_EXPLANATION",
+                    "WORKED_EXAMPLE",
+                    "PRACTICE_SET",
+                    "PLAYGROUND",
+                    "FLASHCARDS",
+                    "FLASHCARD",
+                    "QUIZ",
+                    "VIDEO",
+                    "READING_PDF",
+                  ].includes(item.deliveryTypeCode) && (
+                    <div>
+                      <label className={labelCls}>Raw JSON (fallback)</label>
+                      <textarea
+                        className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[120px] resize-y font-mono"
+                        placeholder='{"key":"value"}'
+                        value={item.rawJson}
+                        onChange={(e) => updateContentItem(index, "rawJson", e.target.value)}
+                      />
+                    </div>
+                  )}
               </div>
             ))}
 
@@ -616,7 +1124,7 @@ export default function NewSubmissionPage() {
               onClick={() =>
                 setContentItems((prev) => [
                   ...prev,
-                  { deliveryTypeId: "", deliveryTypeCode: "", title: "", url: "" },
+                  { ...EMPTY_CONTENT_ITEM },
                 ])
               }
               className="w-full border border-dashed border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-300"

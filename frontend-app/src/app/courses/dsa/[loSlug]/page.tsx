@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import type { AssessmentAttempt, ContentTabData, LearningObjectDetail, LearningObject } from "@/types/learning";
+import type { AssessmentAttempt, ContentTabData, LearningObjectContent, LearningObjectDetail, LearningObject } from "@/types/learning";
 import { LOHeader } from "@/components/lo/LOHeader";
 import { LODetailTabs } from "@/components/lo/LODetailTabs";
 import type { RoadmapEdge, RoadmapNode } from "@/components/lo/RoadmapTree";
@@ -24,7 +24,8 @@ export default async function LODetailPage({ params }: PageProps) {
     const { data: { user } = { user: null } } = await supabase.auth.getUser();
     userId = user?.id ?? undefined;
 
-    const { data: learningObject, error } = await supabase.from("learning_object").select("*").eq("slug", params.loSlug).maybeSingle();
+    const { data: learningObjectRow, error } = await supabase.from("learning_object").select("*").eq("slug", params.loSlug).maybeSingle();
+    const learningObject = (learningObjectRow as LearningObject | null) ?? null;
 
     if (!error && learningObject) {
       // Fetch content from approved teacher submissions
@@ -93,8 +94,8 @@ export default async function LODetailPage({ params }: PageProps) {
         dependents: (dependentLosRes.data as LearningObject[] | null) ?? [],
         assessment: assessmentRes.data
           ? {
-              ...assessmentRes.data,
-              questions: assessmentRes.data.lo_question ?? []
+              ...(assessmentRes.data as any),
+              questions: ((assessmentRes.data as any).lo_question ?? []) as any[]
             }
           : undefined,
         progress: undefined
@@ -105,8 +106,8 @@ export default async function LODetailPage({ params }: PageProps) {
 
       const progressIds = [loDetail.id, ...prerequisiteLOs.map((pr) => pr.id), ...dependentLOs.map((dep) => dep.id)];
       const progressRes = userId && progressIds.length > 0 ? await supabase.from("user_learning_progress").select("*").eq("user_id", userId).in("learning_object_id", progressIds) : null;
-      const progressEntries = progressRes?.data?.map((row) => [row.learning_object_id, row]) ?? [];
-      progressMap = new Map(progressEntries);
+      const progressEntries = (progressRes?.data?.map((row: any) => [row.learning_object_id, row] as [string, any]) ?? []) as Array<[string, any]>;
+      progressMap = new Map<string, any>(progressEntries);
       loDetail.progress = progressMap.get(loDetail.id);
       attempts = attemptsRes.data ?? [];
     }
@@ -116,8 +117,9 @@ export default async function LODetailPage({ params }: PageProps) {
     notFound();
   }
 
-  const contentTabs = mapContentTabs(loDetail.contents);
-  const recommendedTab = pickRecommendedTab(loDetail.contents);
+  const contentBlocks = withQuizBlock(loDetail.contents, loDetail.assessment, loDetail.id);
+  const contentTabs = mapContentTabs(contentBlocks);
+  const recommendedTab = pickRecommendedTab(contentBlocks);
   const roadmap = buildRoadmap({
     lo: loDetail,
     prerequisites: loDetail.prerequisites,
@@ -201,15 +203,59 @@ export default async function LODetailPage({ params }: PageProps) {
   );
 }
 
-function mapContentTabs(contents: LearningObjectDetail["contents"]): ContentTabData {
+function withQuizBlock(
+  contents: LearningObjectDetail["contents"],
+  assessment: LearningObjectDetail["assessment"],
+  learningObjectId: string
+): LearningObjectContent[] {
+  if (!assessment) {
+    return contents;
+  }
+
+  const maxSequence = contents.reduce((max, item) => Math.max(max, item.sequence_order ?? 0), 0);
+  const quizBlock: LearningObjectContent = {
+    id: `quiz-${assessment.id}`,
+    learning_object_id: learningObjectId,
+    delivery_type_id: "QUIZ",
+    title: assessment.title || "Quiz",
+    content_json: {},
+    sequence_order: maxSequence + 1,
+    is_active: true,
+    delivery_type: { id: "QUIZ", code: "QUIZ", name: "Quiz" }
+  };
+
+  return [...contents, quizBlock];
+}
+
+function mapContentTabs(contents: LearningObjectContent[]): ContentTabData {
   return contents.reduce<ContentTabData>((acc, item) => {
     const code = item.delivery_type?.code;
+    acc.blocks = acc.blocks ?? [];
+    acc.blocks.push(item);
     const assign = (key: keyof ContentTabData) => {
       acc[key] = acc[key] ?? [];
       acc[key]!.push(item);
     };
 
     switch (code) {
+      case "CONCEPT_NOTES":
+        assign("conceptNotes");
+        break;
+      case "FLOWCHART":
+        assign("flowchart");
+        break;
+      case "VISUAL_EXPLANATION":
+        assign("visualExplanation");
+        break;
+      case "WORKED_EXAMPLE":
+        assign("workedExample");
+        break;
+      case "PRACTICE_SET":
+        assign("practiceSet");
+        break;
+      case "REVISION_SHEET":
+        assign("revisionSheet");
+        break;
       case "VIDEO":
         assign("video");
         break;
@@ -223,6 +269,7 @@ function mapContentTabs(contents: LearningObjectDetail["contents"]): ContentTabD
         assign("playground");
         break;
       case "FLASHCARD":
+      case "FLASHCARDS":
         assign("flashcards");
         break;
       default:
@@ -232,11 +279,34 @@ function mapContentTabs(contents: LearningObjectDetail["contents"]): ContentTabD
   }, {} as ContentTabData);
 }
 
-function pickRecommendedTab(contents: LearningObjectDetail["contents"]) {
-  const priority = ["PLAYGROUND", "VIDEO", "READING_NOTES", "READING_PDF"];
+function pickRecommendedTab(contents: LearningObjectContent[]) {
+  const priority = [
+    "CONCEPT_NOTES",
+    "WORKED_EXAMPLE",
+    "PRACTICE_SET",
+    "REVISION_SHEET",
+    "FLOWCHART",
+    "VISUAL_EXPLANATION",
+    "PLAYGROUND",
+    "VIDEO",
+    "READING_NOTES",
+    "READING_PDF"
+  ];
   for (const code of priority) {
     if (contents.some((content) => content.delivery_type?.code === code)) {
       switch (code) {
+        case "CONCEPT_NOTES":
+          return "conceptNotes";
+        case "WORKED_EXAMPLE":
+          return "workedExample";
+        case "PRACTICE_SET":
+          return "practiceSet";
+        case "REVISION_SHEET":
+          return "revisionSheet";
+        case "FLOWCHART":
+          return "flowchart";
+        case "VISUAL_EXPLANATION":
+          return "visualExplanation";
         case "PLAYGROUND":
           return "playground";
         case "VIDEO":
