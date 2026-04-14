@@ -9,3 +9,36 @@
 body {
   font-feature-settings: "liga" 1, "calt" 1;
 }
+
+/* ── Scrollbar ───────────────────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgb(51 65 85); /* slate-700 */
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(71 85 105); /* slate-600 */
+}
+
+/* ── Text selection ──────────────────────────────────────────────────────── */
+::selection {
+  background: rgb(99 102 241 / 0.25);
+  color: inherit;
+}
+
+/* ── Smooth scroll ───────────────────────────────────────────────────────── */
+html {
+  scroll-behavior: smooth;
+}
+
+/* ── Focus ring baseline ─────────────────────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid rgb(99 102 241 / 0.6);
+  outline-offset: 2px;
+}

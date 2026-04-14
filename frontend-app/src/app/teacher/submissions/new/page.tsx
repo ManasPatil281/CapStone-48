@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardTitle } from "@/components/ui/card";
 import Link from "next/link";
+import { ArrowLeft, CheckCircle, Loader2 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -560,9 +561,10 @@ export default function NewSubmissionPage() {
 
   if (userLoading || dataLoading) {
     return (
-      <main className="min-h-screen bg-gradient-to-br from-indigo-500/20 via-slate-950 to-slate-900 p-6">
-        <div className="mx-auto max-w-3xl">
-          <p className="text-slate-400">Loading…</p>
+      <main className="min-h-screen bg-slate-950 px-6 py-8">
+        <div className="mx-auto flex max-w-3xl items-center gap-2 text-slate-400">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          <span className="text-sm">Loading…</span>
         </div>
       </main>
     );
@@ -570,11 +572,15 @@ export default function NewSubmissionPage() {
 
   if (success) {
     return (
-      <main className="min-h-screen bg-gradient-to-br from-indigo-500/20 via-slate-950 to-slate-900 p-6 flex items-center justify-center">
-        <Card className="p-8 text-center space-y-4 bg-slate-900 border-slate-700">
-          <div className="text-5xl">✓</div>
-          <CardTitle className="text-green-400">Submission Created</CardTitle>
-          <p className="text-slate-400">
+      <main className="flex min-h-screen items-center justify-center bg-slate-950 px-6">
+        <Card className="w-full max-w-sm space-y-4 p-8 text-center">
+          <div className="flex justify-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500/15">
+              <CheckCircle className="h-6 w-6 text-emerald-400" />
+            </div>
+          </div>
+          <CardTitle className="text-emerald-400">Submission Created</CardTitle>
+          <p className="text-sm text-slate-400">
             Saved as a draft. Redirecting to your dashboard…
           </p>
         </Card>
@@ -585,10 +591,10 @@ export default function NewSubmissionPage() {
   // ─── Shared style tokens ──────────────────────────────────────────────────
 
   const selectCls =
-    "w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500";
-  const labelCls = "block text-sm font-medium text-slate-300 mb-1";
+    "w-full rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-2.5 text-sm text-slate-100 transition-colors focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/30";
+  const labelCls = "block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1.5";
   const sectionCls =
-    "space-y-4 rounded-lg border border-slate-800 bg-slate-900/60 p-5";
+    "space-y-4 rounded-xl border border-slate-800 bg-slate-900/60 p-6";
 
   // LOs available for edge selection — exclude the currently selected LO
   const edgeLOs = learningObjects.filter((lo) => lo.id !== selectedLoId);
@@ -596,20 +602,33 @@ export default function NewSubmissionPage() {
   // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <main className="min-h-screen bg-gradient-to-br from-indigo-500/20 via-slate-950 to-slate-900 p-6">
-      <div className="mx-auto max-w-3xl space-y-6">
-        <div>
-          <h1 className="text-3xl font-bold">Create New Submission</h1>
-          <p className="text-slate-400">
-            Submit content for a learning object — saved as a draft for review
-          </p>
+    <main className="min-h-screen bg-slate-950 px-6 py-8">
+      <div className="mx-auto max-w-3xl space-y-8">
+        {/* Page header */}
+        <div className="space-y-3">
+          <Link
+            href="/teacher"
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 transition-colors hover:text-slate-300"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            Teacher Dashboard
+          </Link>
+          <div className="border-b border-slate-800 pb-5">
+            <h1 className="text-2xl font-semibold tracking-tight text-slate-50">Create New Submission</h1>
+            <p className="mt-1 text-sm text-slate-500">
+              Submit content for a learning object — saved as approved for students
+            </p>
+          </div>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-6">
 
           {/* ── Submission Details ── */}
           <div className={sectionCls}>
-            <h2 className="text-lg font-semibold text-slate-100">Submission Details</h2>
+            <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
+              <div className="h-4 w-0.5 rounded-full bg-brand" />
+              <h2 className="text-sm font-semibold text-slate-200">Submission Details</h2>
+            </div>
 
             <div>
               <label className={labelCls}>Course *</label>
@@ -641,7 +660,7 @@ export default function NewSubmissionPage() {
             <div>
               <label className={labelCls}>Notes (optional)</label>
               <textarea
-                className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[80px] resize-y"
+                className="w-full rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-2.5 text-sm text-slate-100 transition-colors focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/30 min-h-[80px] resize-y"
                 placeholder="Any notes about this submission…"
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
@@ -651,7 +670,10 @@ export default function NewSubmissionPage() {
 
           {/* ── Learning Object ── */}
           <div className={sectionCls}>
-            <h2 className="text-lg font-semibold text-slate-100">Learning Object</h2>
+            <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
+              <div className="h-4 w-0.5 rounded-full bg-brand" />
+              <h2 className="text-sm font-semibold text-slate-200">Learning Object</h2>
+            </div>
 
             <div>
               <label className={labelCls}>Select LO *</label>
@@ -678,8 +700,8 @@ export default function NewSubmissionPage() {
 
             {/* Inline new LO form */}
             {selectedLoId === "NEW" && (
-              <div className="space-y-3 rounded-md border border-indigo-700/50 bg-indigo-950/30 p-4">
-                <p className="text-xs font-medium uppercase tracking-wide text-indigo-300">
+              <div className="space-y-3 rounded-xl border border-brand/30 bg-brand/5 p-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-brand-muted">
                   New Learning Object
                 </p>
 
@@ -701,7 +723,7 @@ export default function NewSubmissionPage() {
                 <div>
                   <label className={labelCls}>Description (optional)</label>
                   <textarea
-                    className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[60px] resize-y"
+                    className="w-full rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-2.5 text-sm text-slate-100 transition-colors focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/30 min-h-[60px] resize-y"
                     placeholder="Brief description of this LO…"
                     value={newLoDescription}
                     onChange={(e) => setNewLoDescription(e.target.value)}
@@ -739,7 +761,10 @@ export default function NewSubmissionPage() {
 
           {/* ── Prerequisites ── */}
           <div className={sectionCls}>
-            <h2 className="text-lg font-semibold text-slate-100">Prerequisites</h2>
+            <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
+              <div className="h-4 w-0.5 rounded-full bg-brand" />
+              <h2 className="text-sm font-semibold text-slate-200">Prerequisites</h2>
+            </div>
             <p className="text-xs text-slate-500">
               LOs the student should complete before this one — creates an incoming edge
               (prerequisite → this LO)
@@ -755,7 +780,7 @@ export default function NewSubmissionPage() {
                   >
                     <input
                       type="checkbox"
-                      className="accent-indigo-500"
+                      className="accent-brand"
                       checked={prerequisites.includes(lo.id)}
                       onChange={() =>
                         toggleCheck(lo.id, prerequisites, setPrerequisites)
@@ -770,7 +795,10 @@ export default function NewSubmissionPage() {
 
           {/* ── Post-requisites ── */}
           <div className={sectionCls}>
-            <h2 className="text-lg font-semibold text-slate-100">Post-requisites</h2>
+            <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
+              <div className="h-4 w-0.5 rounded-full bg-brand" />
+              <h2 className="text-sm font-semibold text-slate-200">Post-requisites</h2>
+            </div>
             <p className="text-xs text-slate-500">
               LOs that should come after this one — creates an outgoing edge
               (this LO → post-requisite)
@@ -786,7 +814,7 @@ export default function NewSubmissionPage() {
                   >
                     <input
                       type="checkbox"
-                      className="accent-indigo-500"
+                      className="accent-brand"
                       checked={postrequisites.includes(lo.id)}
                       onChange={() =>
                         toggleCheck(lo.id, postrequisites, setPostrequisites)
@@ -801,7 +829,10 @@ export default function NewSubmissionPage() {
 
           {/* ── Content ── */}
           <div className={sectionCls}>
-            <h2 className="text-lg font-semibold text-slate-100">Content</h2>
+            <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
+              <div className="h-4 w-0.5 rounded-full bg-brand" />
+              <h2 className="text-sm font-semibold text-slate-200">Content</h2>
+            </div>
 
             {contentItems.map((item, index) => (
               <div
@@ -867,7 +898,7 @@ export default function NewSubmissionPage() {
                       {item.deliveryTypeCode === "REVISION_SHEET" ? "Summary" : "Text"}
                     </label>
                     <textarea
-                      className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[160px] resize-y"
+                      className="w-full rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-2.5 text-sm text-slate-100 transition-colors focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/30 min-h-[160px] resize-y"
                       placeholder="Write content here..."
                       value={item.text}
                       onChange={(e) => updateContentItem(index, "text", e.target.value)}
@@ -900,7 +931,7 @@ export default function NewSubmissionPage() {
                       <div>
                         <label className={labelCls}>Explanation text (optional)</label>
                         <textarea
-                          className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[120px] resize-y"
+                          className="w-full rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-2.5 text-sm text-slate-100 transition-colors focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/30 min-h-[120px] resize-y"
                           placeholder="Describe the visual"
                           value={item.text}
                           onChange={(e) => updateContentItem(index, "text", e.target.value)}
@@ -915,7 +946,7 @@ export default function NewSubmissionPage() {
                     <div>
                       <label className={labelCls}>Problem</label>
                       <textarea
-                        className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[90px] resize-y"
+                        className="w-full rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-2.5 text-sm text-slate-100 transition-colors focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/30 min-h-[90px] resize-y"
                         value={item.problem}
                         onChange={(e) => updateContentItem(index, "problem", e.target.value)}
                       />
@@ -923,7 +954,7 @@ export default function NewSubmissionPage() {
                     <div>
                       <label className={labelCls}>Solution</label>
                       <textarea
-                        className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[90px] resize-y"
+                        className="w-full rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-2.5 text-sm text-slate-100 transition-colors focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/30 min-h-[90px] resize-y"
                         value={item.solution}
                         onChange={(e) => updateContentItem(index, "solution", e.target.value)}
                       />
@@ -931,7 +962,7 @@ export default function NewSubmissionPage() {
                     <div>
                       <label className={labelCls}>Explanation</label>
                       <textarea
-                        className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[90px] resize-y"
+                        className="w-full rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-2.5 text-sm text-slate-100 transition-colors focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/30 min-h-[90px] resize-y"
                         value={item.explanation}
                         onChange={(e) => updateContentItem(index, "explanation", e.target.value)}
                       />
@@ -943,7 +974,7 @@ export default function NewSubmissionPage() {
                   <div>
                     <label className={labelCls}>Questions (one per line)</label>
                     <textarea
-                      className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[140px] resize-y"
+                      className="w-full rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-2.5 text-sm text-slate-100 transition-colors focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/30 min-h-[140px] resize-y"
                       placeholder="Question 1&#10;Question 2&#10;Question 3"
                       value={item.questionsText}
                       onChange={(e) => updateContentItem(index, "questionsText", e.target.value)}
@@ -965,7 +996,7 @@ export default function NewSubmissionPage() {
                     <div>
                       <label className={labelCls}>Starter Code</label>
                       <textarea
-                        className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[160px] resize-y font-mono"
+                        className="w-full rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-2.5 text-sm text-slate-100 transition-colors focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/30 min-h-[160px] resize-y font-mono"
                         value={item.starterCode}
                         onChange={(e) => updateContentItem(index, "starterCode", e.target.value)}
                       />
@@ -1028,7 +1059,7 @@ export default function NewSubmissionPage() {
                           )}
                         </div>
                         <textarea
-                          className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[80px] resize-y"
+                          className="w-full rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-2.5 text-sm text-slate-100 transition-colors focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/30 min-h-[80px] resize-y"
                           placeholder="Question text"
                           value={question.questionText}
                           onChange={(e) => updateQuizQuestion(index, questionIndex, e.target.value)}
@@ -1041,7 +1072,7 @@ export default function NewSubmissionPage() {
                               name={`quiz-correct-${index}-${questionIndex}`}
                               checked={question.correctOptionIndex === optionIndex}
                               onChange={() => setQuizCorrectOption(index, questionIndex, optionIndex)}
-                              className="accent-indigo-500"
+                              className="accent-brand"
                             />
                             <Input
                               placeholder={`Option ${optionIndex + 1}`}
@@ -1108,7 +1139,7 @@ export default function NewSubmissionPage() {
                     <div>
                       <label className={labelCls}>Raw JSON (fallback)</label>
                       <textarea
-                        className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[120px] resize-y font-mono"
+                        className="w-full rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-2.5 text-sm text-slate-100 transition-colors focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/30 min-h-[120px] resize-y font-mono"
                         placeholder='{"key":"value"}'
                         value={item.rawJson}
                         onChange={(e) => updateContentItem(index, "rawJson", e.target.value)}
@@ -1141,13 +1172,16 @@ export default function NewSubmissionPage() {
           )}
 
           {/* ── Actions ── */}
-          <div className="flex gap-3 pt-2">
-            <Button
-              type="submit"
-              disabled={submitting}
-              className="bg-indigo-600 hover:bg-indigo-500"
-            >
-              {submitting ? "Creating…" : "Create Submission"}
+          <div className="flex items-center gap-3 pt-2">
+            <Button type="submit" disabled={submitting}>
+              {submitting ? (
+                <span className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Creating…
+                </span>
+              ) : (
+                "Create Submission"
+              )}
             </Button>
             <Button asChild variant="ghost">
               <Link href="/teacher">Cancel</Link>

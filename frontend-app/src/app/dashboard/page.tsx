@@ -25,15 +25,23 @@ export default async function DashboardPage() {
   const availableCourses = (courses ?? []) as Course[];
 
   return (
-    <main className="min-h-screen bg-gradient-to-br from-indigo-500/20 via-slate-950 to-slate-900 p-6">
-      <div className="mx-auto max-w-5xl space-y-6">
-        <div>
-          <h1 className="text-3xl font-bold">Welcome, {user.profile?.full_name || user.email}</h1>
-          <p className="text-slate-400">Role: {roleDisplay}</p>
+    <main className="min-h-screen bg-slate-950 px-6 py-8">
+      <div className="mx-auto max-w-5xl space-y-8">
+        {/* Page header */}
+        <div className="border-b border-slate-800 pb-6">
+          <p className="mb-1 text-xs font-semibold uppercase tracking-widest text-slate-500">
+            {roleDisplay}
+          </p>
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-50">
+            Welcome back,{" "}
+            <span className="text-slate-200">
+              {user.profile?.full_name || user.email?.split("@")[0] || user.email}
+            </span>
+          </h1>
           {showRoleWarning && (
-            <p className="mt-2 text-sm text-amber-400">
-              ⚠ No user profile found. Please contact an administrator to set up your account.
-            </p>
+            <div className="mt-3 flex items-center gap-2 rounded-lg border border-amber-800/40 bg-amber-950/20 px-3 py-2 text-sm text-amber-400">
+              No user profile found — contact an administrator to set up your account.
+            </div>
           )}
         </div>
 

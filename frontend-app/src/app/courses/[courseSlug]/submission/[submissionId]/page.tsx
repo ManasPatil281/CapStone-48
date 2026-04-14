@@ -5,6 +5,7 @@ import { LOHeader } from "@/components/lo/LOHeader";
 import { LODetailTabs } from "@/components/lo/LODetailTabs";
 import type { ContentTabData, LearningObject, LearningObjectContent, LearningObjectDetail } from "@/types/learning";
 import type { RoadmapEdge, RoadmapNode } from "@/components/lo/RoadmapTree";
+import { ArrowLeft, User } from "lucide-react";
 
 interface PageProps {
   params: {
@@ -250,34 +251,46 @@ export default async function SubmissionDetailPage({ params }: PageProps) {
   }
 
   return (
-    <div className="space-y-10 p-6">
-      <div>
+    <main className="min-h-screen bg-slate-950 px-6 py-8">
+      <div className="mx-auto max-w-5xl space-y-8">
+        {/* Back navigation */}
         <Link
           href={`/courses/${params.courseSlug}`}
-          className="inline-flex items-center text-sm text-slate-400 hover:text-slate-200 hover:underline"
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 transition-colors hover:text-slate-300"
         >
-          {"<- Back to "}
+          <ArrowLeft className="h-3.5 w-3.5" />
           {course.title || course.slug.toUpperCase()}
         </Link>
+
+        {/* LO header */}
+        <LOHeader lo={loDetail} />
+
+        {/* Submission metadata */}
+        <div className="flex flex-wrap gap-4 rounded-xl border border-slate-800 bg-slate-900/60 px-5 py-4">
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Submission</span>
+            <span className="rounded-md bg-slate-800 px-2 py-0.5 font-mono text-xs text-slate-300">
+              {submission.id.slice(0, 8)}…
+            </span>
+          </div>
+          <div className="flex items-center gap-2 text-sm">
+            <User className="h-3.5 w-3.5 text-slate-500" />
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Instructor</span>
+            <span className="text-sm font-medium text-slate-200">{teacherName}</span>
+          </div>
+        </div>
+
+        {/* Content tabs */}
+        <LODetailTabs
+          content={contentTabs}
+          roadmap={roadmap}
+          courseSlug={params.courseSlug}
+          courseRoadmap={courseRoadmapData}
+          assessment={loDetail.assessment}
+          recommendedTab={recommendedTab}
+        />
       </div>
-      <LOHeader lo={loDetail} />
-      <div className="rounded-2xl border border-white/10 bg-slate-900/40 p-4 text-sm text-slate-300">
-        <p>
-          Submission: <span className="font-semibold text-slate-100">{submission.id}</span>
-        </p>
-        <p>
-          Instructor: <span className="font-semibold text-slate-100">{teacherName}</span>
-        </p>
-      </div>
-      <LODetailTabs
-        content={contentTabs}
-        roadmap={roadmap}
-        courseSlug={params.courseSlug}
-        courseRoadmap={courseRoadmapData}
-        assessment={loDetail.assessment}
-        recommendedTab={recommendedTab}
-      />
-    </div>
+    </main>
   );
 }
 

@@ -1,7 +1,21 @@
 "use client";
 
-import { useMemo } from "react";
+import React, { useMemo } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  FileText,
+  GitBranch,
+  Image,
+  Brain,
+  ClipboardList,
+  Bookmark,
+  Play,
+  BookOpen,
+  FileStack,
+  Code2,
+  Layers,
+  HelpCircle
+} from "lucide-react";
 import type {
   Assessment,
   AssessmentAttempt,
@@ -104,15 +118,19 @@ export function DeliveryTypeTabs({ data, assessment, attempts, recommended }: Pr
             <TabsTrigger
               key={block.key}
               value={block.key}
-              className={`whitespace-nowrap text-sm flex items-center gap-2 px-4 py-2 rounded-lg transition-all ${
+              className={`whitespace-nowrap text-sm flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${
                 isRecommended
-                  ? "border border-brand/50 bg-brand/10 text-brand font-semibold shadow-lg shadow-brand/20"
-                  : "text-slate-300 hover:text-white hover:bg-slate-800/40"
+                  ? "border border-brand/40 bg-brand/10 text-brand font-semibold ring-1 ring-brand/20"
+                  : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/40"
               }`}
             >
-              <span className="text-lg">{getBlockIcon(block.code)}</span>
+              {getBlockIcon(block.code)}
               <span>{index + 1}. {block.label}</span>
-              {isRecommended && <span className="text-[10px] uppercase font-bold ml-1 px-2 py-1 bg-brand/20 text-brand rounded">Recommended</span>}
+              {isRecommended && (
+                <span className="ml-1 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide bg-brand/20 text-brand">
+                  ✦ Pick
+                </span>
+              )}
             </TabsTrigger>
           );
         })}
@@ -248,12 +266,24 @@ function mapCodeToLegacyKey(code?: string): TabKey | "quiz" | "unknown" {
   }
 }
 
-function getBlockIcon(code?: string): string {
+function getBlockIcon(code?: string): React.ReactNode {
+  const cls = "h-3.5 w-3.5 flex-shrink-0";
   const mapped = mapCodeToLegacyKey(code);
-  const entry = TAB_ORDER.find((tab) => tab.key === mapped);
-  if (entry) return entry.icon;
-  if (mapped === "quiz") return "❓";
-  return "📘";
+  switch (mapped) {
+    case "conceptNotes":    return <FileText className={cls} />;
+    case "flowchart":       return <GitBranch className={cls} />;
+    case "visualExplanation": return <Image className={cls} />;
+    case "workedExample":   return <Brain className={cls} />;
+    case "practiceSet":     return <ClipboardList className={cls} />;
+    case "revisionSheet":   return <Bookmark className={cls} />;
+    case "video":           return <Play className={cls} />;
+    case "notes":           return <BookOpen className={cls} />;
+    case "pdf":             return <FileStack className={cls} />;
+    case "playground":      return <Code2 className={cls} />;
+    case "flashcards":      return <Layers className={cls} />;
+    case "quiz":            return <HelpCircle className={cls} />;
+    default:                return <BookOpen className={cls} />;
+  }
 }
 
 function getMarkdown(contentJson: unknown): string {

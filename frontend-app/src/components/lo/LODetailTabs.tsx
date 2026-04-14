@@ -6,6 +6,7 @@ import type { RoadmapEdge, RoadmapNode } from "@/components/lo/RoadmapTree";
 import { DeliveryTypeTabs } from "@/components/lo/DeliveryTypeTabs";
 import { RoadmapTree } from "@/components/lo/RoadmapTree";
 import { CourseRoadmap } from "@/components/lo/CourseRoadmap";
+import { LayoutList, GitBranch, Map as MapIcon } from "lucide-react";
 
 interface Props {
   content: ContentTabData;
@@ -29,9 +30,20 @@ export function LODetailTabs({ content, courseSlug = "dsa", roadmap, courseRoadm
   return (
     <Tabs defaultValue="content">
       <TabsList>
-        <TabsTrigger value="content">Content</TabsTrigger>
-        <TabsTrigger value="roadmap">Module Roadmap</TabsTrigger>
-        {courseRoadmap && <TabsTrigger value="courseRoadmap">📚 Course Roadmap</TabsTrigger>}
+        <TabsTrigger value="content">
+          <LayoutList className="h-3.5 w-3.5" />
+          Content
+        </TabsTrigger>
+        <TabsTrigger value="roadmap">
+          <GitBranch className="h-3.5 w-3.5" />
+          Module Roadmap
+        </TabsTrigger>
+        {courseRoadmap && (
+          <TabsTrigger value="courseRoadmap">
+            <MapIcon className="h-3.5 w-3.5" />
+            Course Roadmap
+          </TabsTrigger>
+        )}
       </TabsList>
       <TabsContent value="content">
         <DeliveryTypeTabs data={content} assessment={assessment} attempts={attempts} recommended={recommendedTab} />
