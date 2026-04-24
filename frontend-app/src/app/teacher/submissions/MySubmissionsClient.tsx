@@ -3,6 +3,7 @@
 import { type ChangeEvent, useMemo, useState } from "react";
 import Link from "next/link";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { formatDisplayDate } from "@/lib/date";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
@@ -11,6 +12,7 @@ import { ArrowLeft, Edit3, Loader2, Plus, Trash2 } from "lucide-react";
 type SubmissionCard = {
   id: string;
   title: string;
+  notes: string | null;
   status: string;
   created_at: string;
   updated_at: string;
@@ -238,13 +240,13 @@ export function MySubmissionsClient({ teacherId, initialSubmissions }: MySubmiss
           <div className="grid gap-4 md:grid-cols-2">
             {sortedSubmissions.map((submission) => {
               const activityDate = submission.updated_at || submission.created_at;
-              const dateText = new Date(activityDate).toLocaleDateString();
+              const dateText = formatDisplayDate(activityDate);
+              const noteText = submission.notes?.trim() ?? "";
 
               return (
                 <Card key={submission.id} className="space-y-4 p-5">
                   <div className="space-y-1">
                     <CardTitle className="text-lg text-slate-100">{submission.title}</CardTitle>
-                    <p className="text-xs uppercase tracking-wide text-slate-500">{submission.status}</p>
                   </div>
 
                   <div className="space-y-1 text-sm text-slate-400">
@@ -252,6 +254,12 @@ export function MySubmissionsClient({ teacherId, initialSubmissions }: MySubmiss
                     <p>Course: {submission.course_title}</p>
                     <p>Updated: {dateText}</p>
                   </div>
+
+                  {noteText && (
+                    <p className="rounded-md border border-slate-800/80 bg-slate-900/50 px-3 py-2 text-xs leading-relaxed text-slate-400">
+                      {noteText}
+                    </p>
+                  )}
 
                   <div className="flex flex-wrap gap-2 pt-1">
                     <Button asChild size="sm" variant="secondary">

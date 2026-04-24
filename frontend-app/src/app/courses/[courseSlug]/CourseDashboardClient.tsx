@@ -7,13 +7,14 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CourseRoadmap } from "@/components/lo/CourseRoadmap";
 import type { RoadmapEdge, RoadmapNode } from "@/components/lo/RoadmapTree";
-import { ArrowLeft, BookOpen, GitBranch, Search, User } from "lucide-react";
+import { ArrowLeft, ArrowRight, BookOpen, GitBranch, Search, User } from "lucide-react";
 
 interface SubmissionTile {
   submissionId: string;
   submissionTitle: string;
   loTitle: string;
   teacherName: string;
+  notes: string;
 }
 
 interface CourseDashboardClientProps {
@@ -41,6 +42,8 @@ function EmptyState({ message, sub }: { message: string; sub: string }) {
 }
 
 function SubmissionCard({ entry, courseSlug }: { entry: SubmissionTile; courseSlug: string }) {
+  const noteText = entry.notes.trim();
+
   return (
     <Link
       href={`/courses/${courseSlug}/submission/${entry.submissionId}` as Route}
@@ -49,6 +52,10 @@ function SubmissionCard({ entry, courseSlug }: { entry: SubmissionTile; courseSl
       <div className="card-lift relative flex h-full flex-col gap-4 overflow-hidden rounded-xl border border-slate-800/70 bg-slate-900/60 p-5 shadow-card backdrop-blur-[1px] hover:border-brand/30 hover:bg-slate-900/80 hover:shadow-brand-glow">
         {/* Accent bar */}
         <div className="absolute left-0 top-0 h-full w-0.5 rounded-l-xl bg-brand/0 transition-colors duration-200 group-hover:bg-brand/40" />
+
+        <div className="pointer-events-none absolute right-4 top-4 hidden shrink-0 translate-x-0 transform items-center justify-center rounded-full border border-brand/20 bg-brand/10 p-2 opacity-60 transition-all duration-200 group-hover:translate-x-1 group-hover:opacity-100 sm:flex">
+          <ArrowRight className="h-3.5 w-3.5 text-brand" />
+        </div>
 
         {/* Icon */}
         <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-800 bg-slate-800/80 transition-colors group-hover:border-brand/25 group-hover:bg-brand/10">
@@ -64,6 +71,11 @@ function SubmissionCard({ entry, courseSlug }: { entry: SubmissionTile; courseSl
             <User className="h-3 w-3 text-slate-600" />
             <span>{entry.teacherName}</span>
           </div>
+          {noteText && (
+            <p className="line-clamp-2 text-xs leading-relaxed text-slate-500">
+              {noteText}
+            </p>
+          )}
         </div>
 
         {/* Footer */}

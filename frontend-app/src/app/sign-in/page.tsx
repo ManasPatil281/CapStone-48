@@ -22,20 +22,25 @@ export default function SignInPage() {
 
     const supabase = createSupabaseBrowserClient();
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password
-    });
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password
+      });
 
-    if (error) {
-      setError(error.message);
+      if (error) {
+        throw error;
+      }
+
+      // Success - redirect to dashboard
+      router.push("/dashboard");
+      router.refresh();
+    } catch (signInErr: unknown) {
+      const message = signInErr instanceof Error ? signInErr.message : "Failed to sign in. Please try again.";
+      setError(message);
+    } finally {
       setIsLoading(false);
-      return;
     }
-
-    // Success - redirect to dashboard
-    router.push("/dashboard");
-    router.refresh();
   };
 
   return (

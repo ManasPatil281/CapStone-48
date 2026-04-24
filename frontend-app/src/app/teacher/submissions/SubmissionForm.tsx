@@ -115,7 +115,7 @@ function normalizeInitialContentItems(items: ContentItem[] | undefined): Content
 
 export function SubmissionForm({ mode, initialData, successRedirect }: SubmissionFormProps) {
   const router = useRouter();
-  const { user, isLoading: userLoading } = useUser();
+  const { user, isLoading: userLoading, authError, retry, clearLocalState } = useUser();
 
   const [courses, setCourses] = useState<Course[]>([]);
   const [learningObjects, setLearningObjects] = useState<LO[]>([]);
@@ -125,6 +125,7 @@ export function SubmissionForm({ mode, initialData, successRedirect }: Submissio
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
 
   const [courseId, setCourseId] = useState(initialData?.courseId ?? "");
   const [selectedLoId, setSelectedLoId] = useState(initialData?.selectedLoId ?? "");
@@ -822,12 +823,66 @@ export function SubmissionForm({ mode, initialData, successRedirect }: Submissio
     [learningObjects, selectedLoId]
   );
 
+  async function handleAuthSignOut() {
+    setSigningOut(true);
+
+    const supabase = createSupabaseBrowserClient();
+
+    try {
+      await supabase.auth.signOut();
+    } catch (signOutErr) {
+      console.error("[SubmissionForm] Sign out fallback failed:", signOutErr);
+    } finally {
+      clearLocalState();
+      router.replace("/sign-in");
+      router.refresh();
+      setSigningOut(false);
+    }
+  }
+
   if (userLoading || dataLoading) {
     return (
       <main className="min-h-screen bg-slate-950 px-6 py-8">
         <div className="mx-auto flex max-w-3xl items-center gap-2 text-slate-400">
           <Loader2 className="h-4 w-4 animate-spin" />
           <span className="text-sm">Loading...</span>
+        </div>
+      </main>
+    );
+  }
+
+  if (authError) {
+    return (
+      <main className="min-h-screen bg-slate-950 px-6 py-8">
+        <div className="mx-auto max-w-3xl rounded-xl border border-amber-800/40 bg-amber-950/20 p-5 text-sm text-amber-200">
+          <p className="font-medium">Could not load your session/profile.</p>
+          <p className="mt-1 text-amber-300/90">{authError}</p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button type="button" variant="secondary" onClick={retry}>
+              Retry
+            </Button>
+            <Button type="button" variant="ghost" onClick={handleAuthSignOut} disabled={signingOut}>
+              {signingOut ? "Signing out..." : "Sign out"}
+            </Button>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  if (!user) {
+    return (
+      <main className="min-h-screen bg-slate-950 px-6 py-8">
+        <div className="mx-auto max-w-3xl rounded-xl border border-slate-700 bg-slate-900/60 p-5 text-sm text-slate-300">
+          <p className="font-medium">Your session is not available.</p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button type="button" variant="secondary" onClick={retry}>
+              Retry
+            </Button>
+            <Button type="button" variant="ghost" onClick={handleAuthSignOut} disabled={signingOut}>
+              {signingOut ? "Signing out..." : "Sign out"}
+            </Button>
+          </div>
         </div>
       </main>
     );
