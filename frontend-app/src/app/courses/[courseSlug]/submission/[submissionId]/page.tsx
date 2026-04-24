@@ -5,6 +5,7 @@ import { LOHeader } from "@/components/lo/LOHeader";
 import { LODetailTabs } from "@/components/lo/LODetailTabs";
 import type { ContentTabData, LearningObject, LearningObjectContent, LearningObjectDetail } from "@/types/learning";
 import type { RoadmapEdge, RoadmapNode } from "@/components/lo/RoadmapTree";
+import { buildSubmissionChatContext } from "@/lib/ai/context";
 import { ArrowLeft, User } from "lucide-react";
 
 interface PageProps {
@@ -204,6 +205,16 @@ export default async function SubmissionDetailPage({ params }: PageProps) {
     progressMap
   });
 
+  const chatContext = buildSubmissionChatContext({
+    courseTitle: course.title,
+    loTitle: loDetail.title,
+    submissionId: submission.id,
+    submissionTitle: `Submission ${submission.id.slice(0, 8)}`,
+    teacherName,
+    loDescription: loDetail.description,
+    contents: loDetail.contents
+  });
+
   const { data: courseMembershipRows } = await supabase.from("course_learning_object").select("learning_object_id").eq("course_id", course.id);
 
   const courseLoIds = (courseMembershipRows ?? []).map((row: any) => row.learning_object_id as string).filter(Boolean);
@@ -288,6 +299,7 @@ export default async function SubmissionDetailPage({ params }: PageProps) {
           courseRoadmap={courseRoadmapData}
           assessment={loDetail.assessment}
           recommendedTab={recommendedTab}
+          chatContext={chatContext}
         />
       </div>
     </main>

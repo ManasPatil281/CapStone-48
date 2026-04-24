@@ -6,7 +6,9 @@ import type { RoadmapEdge, RoadmapNode } from "@/components/lo/RoadmapTree";
 import { DeliveryTypeTabs } from "@/components/lo/DeliveryTypeTabs";
 import { RoadmapTree } from "@/components/lo/RoadmapTree";
 import { CourseRoadmap } from "@/components/lo/CourseRoadmap";
-import { LayoutList, GitBranch, Map as MapIcon } from "lucide-react";
+import { SubmissionChatPanel } from "@/components/chat/SubmissionChatPanel";
+import type { SubmissionChatContext } from "@/lib/ai/types";
+import { LayoutList, GitBranch, Map as MapIcon, MessageSquare } from "lucide-react";
 
 interface Props {
   content: ContentTabData;
@@ -24,6 +26,7 @@ interface Props {
   assessment?: Assessment & { questions: any[] };
   attempts?: AssessmentAttempt[];
   recommendedTab?: string;
+  chatContext?: SubmissionChatContext;
 }
 
 export function LODetailTabs({
@@ -33,7 +36,8 @@ export function LODetailTabs({
   courseRoadmap,
   assessment,
   attempts,
-  recommendedTab
+  recommendedTab,
+  chatContext
 }: Props) {
   return (
     <Tabs defaultValue="content" className="w-full">
@@ -50,6 +54,12 @@ export function LODetailTabs({
           <TabsTrigger value="courseRoadmap">
             <MapIcon className="h-3.5 w-3.5" />
             Course Roadmap
+          </TabsTrigger>
+        )}
+        {chatContext && (
+          <TabsTrigger value="chat">
+            <MessageSquare className="h-3.5 w-3.5" />
+            Chat
           </TabsTrigger>
         )}
       </TabsList>
@@ -84,6 +94,12 @@ export function LODetailTabs({
               mostTakenPathNodeIds={courseRoadmap.mostTakenPathNodeIds}
             />
           </div>
+        </TabsContent>
+      )}
+
+      {chatContext && (
+        <TabsContent value="chat">
+          <SubmissionChatPanel context={chatContext} />
         </TabsContent>
       )}
     </Tabs>
