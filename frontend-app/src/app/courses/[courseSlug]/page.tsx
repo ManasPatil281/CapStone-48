@@ -34,7 +34,7 @@ export default async function CourseLandingPage({ params }: PageProps) {
     ? await Promise.all([
         supabase
           .from("teacher_lo_submission")
-          .select("id, learning_object_id, teacher_id, status, updated_at, learning_object:learning_object_id(id,title,slug)")
+          .select("id, title, learning_object_id, teacher_id, status, updated_at, learning_object:learning_object_id(id,title,slug)")
           .eq("status", "approved")
           .in("learning_object_id", loIds)
           .order("updated_at", { ascending: false }),
@@ -66,6 +66,7 @@ export default async function CourseLandingPage({ params }: PageProps) {
 
   const submissions = (submissionRes.data ?? []) as Array<{
     id: string;
+    title: string | null;
     learning_object_id: string;
     teacher_id: string;
     learning_object: { id: string; title: string; slug: string } | null;
@@ -90,6 +91,7 @@ export default async function CourseLandingPage({ params }: PageProps) {
     .filter((item) => item.learning_object?.slug)
     .map((item) => ({
       submissionId: item.id,
+      submissionTitle: item.title ?? "Untitled Submission",
       loTitle: item.learning_object?.title ?? "Untitled LO",
       teacherName: teacherNameById.get(item.teacher_id) ?? "Unknown Teacher"
     }));

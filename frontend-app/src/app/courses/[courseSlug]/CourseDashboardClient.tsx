@@ -7,10 +7,11 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CourseRoadmap } from "@/components/lo/CourseRoadmap";
 import type { RoadmapEdge, RoadmapNode } from "@/components/lo/RoadmapTree";
-import { ArrowLeft, BookOpen, GitBranch, ArrowRight, Search, User } from "lucide-react";
+import { ArrowLeft, BookOpen, GitBranch, Search, User } from "lucide-react";
 
 interface SubmissionTile {
   submissionId: string;
+  submissionTitle: string;
   loTitle: string;
   teacherName: string;
 }
@@ -57,7 +58,7 @@ function SubmissionCard({ entry, courseSlug }: { entry: SubmissionTile; courseSl
         {/* Content */}
         <div className="flex flex-1 flex-col gap-1.5">
           <h3 className="text-sm font-semibold leading-snug tracking-tight text-slate-100 transition-colors duration-150 group-hover:text-white">
-            {entry.loTitle}
+            {entry.submissionTitle || "Untitled Submission"}
           </h3>
           <div className="flex items-center gap-1.5 text-xs text-slate-500">
             <User className="h-3 w-3 text-slate-600" />
@@ -70,9 +71,8 @@ function SubmissionCard({ entry, courseSlug }: { entry: SubmissionTile; courseSl
           <span className="text-[10px] font-semibold uppercase tracking-label text-slate-600">
             Learning Object
           </span>
-          <span className="flex items-center gap-1 text-[10px] font-semibold text-slate-600 opacity-0 transition-opacity duration-150 group-hover:text-brand group-hover:opacity-100">
-            Open
-            <ArrowRight className="h-3 w-3" />
+          <span className="truncate pl-2 text-[11px] font-medium text-slate-400 transition-colors duration-150 group-hover:text-slate-300">
+            {entry.loTitle || "Untitled LO"}
           </span>
         </div>
       </div>
@@ -96,9 +96,10 @@ export function CourseDashboardClient({
     }
 
     return submissions.filter((entry) => {
+      const submissionMatch = entry.submissionTitle.toLowerCase().includes(query);
       const loMatch = entry.loTitle.toLowerCase().includes(query);
       const teacherMatch = entry.teacherName.toLowerCase().includes(query);
-      return loMatch || teacherMatch;
+      return submissionMatch || loMatch || teacherMatch;
     });
   }, [submissions, searchQuery]);
 
@@ -151,7 +152,7 @@ export function CourseDashboardClient({
               <Search className="absolute left-3.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-600" />
               <Input
                 type="text"
-                placeholder="Search learning objects or instructors..."
+                placeholder="Search submissions, learning objects, or instructors..."
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
                 className="pl-9"

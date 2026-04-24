@@ -79,16 +79,29 @@ export default async function TeacherPage() {
         {/* ── Secondary actions: Coming Soon ── */}
         <div className="space-y-3">
           <p className="text-[11px] font-semibold uppercase tracking-label text-slate-600">
-            Coming Soon
+            Secondary Actions
           </p>
 
           <div className="grid gap-3 md:grid-cols-3">
+            <Link href="/teacher/submissions" className="group block cursor-pointer">
+              <div className="relative flex h-full flex-col gap-3 rounded-xl border border-slate-800/50 bg-slate-900/30 p-5 transition-colors hover:border-slate-600/70 hover:bg-slate-900/50">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-800 bg-slate-800/60">
+                  <ClipboardList className="h-4 w-4 text-slate-300" />
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold text-slate-300">My Submissions</p>
+                  <p className="text-xs leading-relaxed text-slate-500">
+                    View and manage your learning object submissions
+                  </p>
+                </div>
+
+                <div className="pointer-events-none absolute right-4 top-4 hidden shrink-0 translate-x-0 transform items-center justify-center rounded-full border border-brand/20 bg-brand/10 p-2 opacity-60 transition-all duration-200 group-hover:translate-x-1 group-hover:opacity-100 sm:flex">
+                  <ArrowRight className="h-4 w-4 text-brand" />
+                </div>
+              </div>
+            </Link>
+
             {[
-              {
-                icon: <ClipboardList className="h-4 w-4 text-slate-500" />,
-                title: "My Submissions",
-                description: "View and manage your learning object submissions"
-              },
               {
                 icon: <MessageSquare className="h-4 w-4 text-slate-500" />,
                 title: "Review Submissions",
