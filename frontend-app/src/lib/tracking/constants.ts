@@ -1,0 +1,1 @@
+export const IDLE_THRESHOLD_SECONDS = 15;

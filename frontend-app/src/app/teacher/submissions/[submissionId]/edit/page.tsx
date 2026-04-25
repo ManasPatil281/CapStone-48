@@ -58,6 +58,10 @@ function mapContentRowToContentItem(row: any): ContentItem {
     deliveryTypeId: row.delivery_type_id,
     deliveryTypeCode: code,
     title: row.title ?? "",
+    recommendedTimeSeconds:
+      typeof row.recommended_time_seconds === "number" && row.recommended_time_seconds > 0
+        ? String(row.recommended_time_seconds)
+        : "",
     text:
       code === "REVISION_SHEET"
         ? (contentJson.summary as string | undefined) ?? ""
@@ -102,6 +106,8 @@ function mapContentRowToContentItem(row: any): ContentItem {
         correctOptionIndex: null,
       },
     ],
+    quizRandomizationMode: "0",
+    quizSamplePercentage: "",
   };
 }
 
@@ -141,7 +147,7 @@ export default async function EditSubmissionPage({ params }: EditPageProps) {
   const [contentRes, edgeRes, assessmentRes, quizDeliveryTypeRes] = await Promise.all([
     supabaseAny
       .from("teacher_lo_submission_content")
-      .select("id, delivery_type_id, title, content_json, sequence_order, delivery_type:delivery_type_id(code)")
+      .select("id, delivery_type_id, title, content_json, sequence_order, recommended_time_seconds, delivery_type:delivery_type_id(code)")
       .eq("submission_id", submissionRow.id)
       .order("sequence_order", { ascending: true }),
     supabaseAny
@@ -150,7 +156,7 @@ export default async function EditSubmissionPage({ params }: EditPageProps) {
       .eq("submission_id", submissionRow.id),
     supabaseAny
       .from("teacher_lo_submission_assessment")
-      .select("id")
+      .select("id, randomization_mode, sample_percentage")
       .eq("submission_id", submissionRow.id),
     supabaseAny.from("delivery_type").select("id, code").eq("code", "QUIZ").maybeSingle(),
   ]);
@@ -167,9 +173,25 @@ export default async function EditSubmissionPage({ params }: EditPageProps) {
     console.error("[EditSubmissionPage] Failed to load assessments:", assessmentRes.error);
   }
 
-  const assessmentIds = ((assessmentRes.data ?? []) as Array<{ id: string }>).map(
-    (item) => item.id
-  );
+  const assessmentRows = (assessmentRes.data ?? []) as Array<{
+    id: string;
+    randomization_mode?: number | null;
+    sample_percentage?: number | null;
+  }>;
+
+  const assessmentIds = assessmentRows.map((item) => item.id);
+
+  const assessmentConfig = assessmentRows[0] ?? null;
+  const randomizationMode =
+    typeof assessmentConfig?.randomization_mode === "number" &&
+    [0, 1, 2].includes(assessmentConfig.randomization_mode)
+      ? assessmentConfig.randomization_mode
+      : 0;
+  const samplePercentage =
+    typeof assessmentConfig?.sample_percentage === "number" &&
+    assessmentConfig.sample_percentage > 0
+      ? assessmentConfig.sample_percentage
+      : null;
 
   let quizQuestions: Array<{
     id: string;
@@ -249,7 +271,7 @@ export default async function EditSubmissionPage({ params }: EditPageProps) {
     mapContentRowToContentItem(row)
   );
 
-  if (quizQuestions.length > 0) {
+  if (assessmentRows.length > 0 || quizQuestions.length > 0) {
     const quizDraftQuestions = quizQuestions.map((question) => {
       const optionTexts = question.options.map((option) => option.option_text);
       while (optionTexts.length < 4) {
@@ -274,6 +296,7 @@ export default async function EditSubmissionPage({ params }: EditPageProps) {
       deliveryTypeId: quizDeliveryTypeRes.data?.id ?? "",
       deliveryTypeCode: "QUIZ",
       title: "Quiz",
+      recommendedTimeSeconds: "",
       text: "",
       imageUrl: "",
       caption: "",
@@ -286,6 +309,8 @@ export default async function EditSubmissionPage({ params }: EditPageProps) {
       rawJson: "",
       flashcards: [{ front: "", back: "" }],
       quizQuestions: quizDraftQuestions,
+      quizRandomizationMode: String(randomizationMode),
+      quizSamplePercentage: samplePercentage === null ? "" : String(samplePercentage),
     });
   }
 

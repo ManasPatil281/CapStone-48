@@ -29,6 +29,7 @@ export type ContentItem = {
   deliveryTypeId: string;
   deliveryTypeCode: string;
   title: string;
+  recommendedTimeSeconds: string;
   text: string;
   imageUrl: string;
   caption: string;
@@ -41,6 +42,8 @@ export type ContentItem = {
   rawJson: string;
   flashcards: FlashcardPair[];
   quizQuestions: QuizQuestionDraft[];
+  quizRandomizationMode: string;
+  quizSamplePercentage: string;
 };
 
 export type SubmissionFormInitialData = {
@@ -72,6 +75,7 @@ const EMPTY_CONTENT_ITEM: ContentItem = {
   deliveryTypeId: "",
   deliveryTypeCode: "",
   title: "",
+  recommendedTimeSeconds: "",
   text: "",
   imageUrl: "",
   caption: "",
@@ -84,6 +88,8 @@ const EMPTY_CONTENT_ITEM: ContentItem = {
   rawJson: "",
   flashcards: [{ front: "", back: "" }],
   quizQuestions: [{ ...EMPTY_QUIZ_QUESTION }],
+  quizRandomizationMode: "0",
+  quizSamplePercentage: "",
 };
 
 function generateSlug(title: string): string {
@@ -111,6 +117,26 @@ function normalizeInitialContentItems(items: ContentItem[] | undefined): Content
         ? item.quizQuestions
         : [{ ...EMPTY_QUIZ_QUESTION }],
   }));
+}
+
+function parsePositiveIntegerOrNull(raw: string, label: string): number | null {
+  const trimmed = raw.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  if (!/^\d+$/.test(trimmed)) {
+    throw new Error(`${label} must be a positive integer.`);
+  }
+
+  const value = Number(trimmed);
+
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`${label} must be a positive integer.`);
+  }
+
+  return value;
 }
 
 export function SubmissionForm({ mode, initialData, successRedirect }: SubmissionFormProps) {
@@ -450,7 +476,47 @@ export function SubmissionForm({ mode, initialData, successRedirect }: Submissio
       }
     });
 
-    return { item: quizItem, questions };
+    const randomizationModeRaw = quizItem.quizRandomizationMode.trim() || "0";
+
+    if (!/^\d+$/.test(randomizationModeRaw)) {
+      throw new Error("Randomisation mode must be 0, 1, or 2.");
+    }
+
+    const randomizationMode = Number(randomizationModeRaw);
+
+    if (![0, 1, 2].includes(randomizationMode)) {
+      throw new Error("Randomisation mode must be 0, 1, or 2.");
+    }
+
+    let samplePercentage: number | null = null;
+
+    if (randomizationMode === 2) {
+      const trimmedSample = quizItem.quizSamplePercentage.trim();
+
+      if (!trimmedSample) {
+        throw new Error("Percentage of questions asked is required for Sample and shuffle.");
+      }
+
+      if (!/^\d+$/.test(trimmedSample)) {
+        throw new Error("Percentage of questions asked must be an integer between 1 and 99.");
+      }
+
+      const parsedSample = Number(trimmedSample);
+
+      if (!Number.isInteger(parsedSample) || parsedSample <= 0) {
+        throw new Error("Percentage of questions asked must be between 1 and 99.");
+      }
+
+      if (parsedSample >= 100) {
+        throw new Error(
+          "If you want to show all questions in random order, select Shuffle all questions instead."
+        );
+      }
+
+      samplePercentage = parsedSample;
+    }
+
+    return { item: quizItem, questions, randomizationMode, samplePercentage };
   }
 
   async function ensureCourseLearningObjectMapping(
@@ -691,6 +757,11 @@ export function SubmissionForm({ mode, initialData, successRedirect }: Submissio
           continue;
         }
 
+        const recommendedTimeSeconds = parsePositiveIntegerOrNull(
+          item.recommendedTimeSeconds,
+          "Recommended time"
+        );
+
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { error: contentErr } = await (supabase as any)
           .from("teacher_lo_submission_content")
@@ -701,6 +772,7 @@ export function SubmissionForm({ mode, initialData, successRedirect }: Submissio
             content_json: built.content_json,
             sequence_order: sequenceOrder,
             is_active: true,
+            recommended_time_seconds: recommendedTimeSeconds,
           });
 
         if (contentErr) {
@@ -723,6 +795,8 @@ export function SubmissionForm({ mode, initialData, successRedirect }: Submissio
             title: assessmentTitle,
             pass_percentage: 70,
             max_attempts: 3,
+            randomization_mode: quizPayload.randomizationMode,
+            sample_percentage: quizPayload.samplePercentage,
           })
           .select("id")
           .single();
@@ -1176,6 +1250,25 @@ export function SubmissionForm({ mode, initialData, successRedirect }: Submissio
                   />
                 </div>
 
+                {item.deliveryTypeCode && item.deliveryTypeCode !== "QUIZ" && (
+                  <div>
+                    <label className={labelCls}>Recommended time</label>
+                    <Input
+                      type="number"
+                      min={1}
+                      step={1}
+                      inputMode="numeric"
+                      placeholder="Seconds"
+                      value={item.recommendedTimeSeconds}
+                      onChange={(e) =>
+                        updateContentItem(index, "recommendedTimeSeconds", e.target.value)
+                      }
+                      className="border-slate-700 bg-slate-800"
+                    />
+                    <p className="mt-1 text-xs text-slate-500">Unit: seconds</p>
+                  </div>
+                )}
+
                 {(item.deliveryTypeCode === "CONCEPT_NOTES" ||
                   item.deliveryTypeCode === "READING_NOTES" ||
                   item.deliveryTypeCode === "REVISION_SHEET") && (
@@ -1338,6 +1431,44 @@ export function SubmissionForm({ mode, initialData, successRedirect }: Submissio
                 {item.deliveryTypeCode === "QUIZ" && (
                   <div className="space-y-3">
                     <p className="text-xs text-slate-400">MCQ Builder (4 options per question)</p>
+                    <div>
+                      <label className={labelCls}>Randomisation mode</label>
+                      <select
+                        className={selectCls}
+                        value={item.quizRandomizationMode}
+                        onChange={(e) =>
+                          updateContentItem(index, "quizRandomizationMode", e.target.value)
+                        }
+                      >
+                        <option value="0">Fixed order</option>
+                        <option value="1">Shuffle all questions</option>
+                        <option value="2">Sample and shuffle</option>
+                      </select>
+                    </div>
+
+                    {item.quizRandomizationMode === "2" && (
+                      <div>
+                        <label className={labelCls}>Percentage of questions asked</label>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={99}
+                          step={1}
+                          inputMode="numeric"
+                          placeholder="e.g. 10"
+                          value={item.quizSamplePercentage}
+                          onChange={(e) =>
+                            updateContentItem(index, "quizSamplePercentage", e.target.value)
+                          }
+                          className="border-slate-700 bg-slate-800"
+                        />
+                        <p className="mt-1 text-xs text-slate-500">
+                          Example: if you add 100 questions and set this to 10%, students will
+                          see 10 random questions.
+                        </p>
+                      </div>
+                    )}
+
                     {item.quizQuestions.map((question, questionIndex) => (
                       <div
                         key={questionIndex}

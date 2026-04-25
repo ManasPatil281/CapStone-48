@@ -27,6 +27,14 @@ interface Props {
   attempts?: AssessmentAttempt[];
   recommendedTab?: string;
   chatContext?: SubmissionChatContext;
+  trackingContext?: {
+    enabled: boolean;
+    studentId: string | null;
+    submissionId: string;
+    courseId: string;
+    learningObjectId: string;
+    teacherId: string;
+  };
 }
 
 export function LODetailTabs({
@@ -37,7 +45,8 @@ export function LODetailTabs({
   assessment,
   attempts,
   recommendedTab,
-  chatContext
+  chatContext,
+  trackingContext
 }: Props) {
   return (
     <Tabs defaultValue="content" className="w-full">
@@ -70,6 +79,7 @@ export function LODetailTabs({
           assessment={assessment}
           attempts={attempts}
           recommended={recommendedTab}
+          trackingContext={trackingContext}
         />
       </TabsContent>
 

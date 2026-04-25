@@ -23,6 +23,11 @@ export default async function SubmissionDetailPage({ params }: PageProps) {
   } = await supabase.auth.getUser();
 
   const userId = user?.id;
+  const { data: viewerProfileRow } = userId
+    ? await supabase.from("user_profile").select("role").eq("id", userId).maybeSingle()
+    : { data: null };
+
+  const viewerProfile = viewerProfileRow as { role: string | null } | null;
 
   const { data: courseRow } = await supabase.from("course").select("id,slug,title").eq("slug", params.courseSlug).maybeSingle();
   const course = courseRow as { id: string; slug: string; title: string } | null;
@@ -300,6 +305,14 @@ export default async function SubmissionDetailPage({ params }: PageProps) {
           assessment={loDetail.assessment}
           recommendedTab={recommendedTab}
           chatContext={chatContext}
+          trackingContext={{
+            enabled: Boolean(userId && viewerProfile?.role === "STUDENT"),
+            studentId: userId ?? null,
+            submissionId: submission.id,
+            courseId: course.id,
+            learningObjectId: loDetail.id,
+            teacherId: submission.teacher_id,
+          }}
         />
       </div>
     </main>

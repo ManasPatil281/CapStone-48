@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import type { Route } from "next";
+import { usePathname, useRouter } from "next/navigation";
 import { useUser } from "@/lib/auth/hooks";
 import { Button } from "@/components/ui/button";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
-import { LogOut } from "lucide-react";
+import { ChevronDown, LogOut } from "lucide-react";
 
 const SIGN_OUT_TIMEOUT_MS = 10000;
 
@@ -26,8 +27,11 @@ async function signOutWithTimeout(
 export function UserNav() {
   const { user, profile, role, isLoading, authError, retry, clearLocalState } = useUser();
   const router = useRouter();
+  const pathname = usePathname();
+  const dropdownRef = useRef<HTMLDivElement | null>(null);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState<string | null>(null);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const mountedRef = useRef(false);
 
   useEffect(() => {
@@ -45,6 +49,48 @@ export function UserNav() {
       setSignOutError(null);
     }
   }, [user?.id, isLoading]);
+
+  useEffect(() => {
+    setIsMenuOpen(false);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!isMenuOpen) {
+      return;
+    }
+
+    const handleOutsidePointer = (event: MouseEvent | TouchEvent) => {
+      const target = event.target;
+      if (!dropdownRef.current || !(target instanceof Node)) {
+        return;
+      }
+
+      if (!dropdownRef.current.contains(target)) {
+        setIsMenuOpen(false);
+      }
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleOutsidePointer);
+    document.addEventListener("touchstart", handleOutsidePointer);
+    document.addEventListener("keydown", handleEscape);
+
+    return () => {
+      document.removeEventListener("mousedown", handleOutsidePointer);
+      document.removeEventListener("touchstart", handleOutsidePointer);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [isMenuOpen]);
+
+  const handleMenuNavigate = (href: "/profile" | "/dashboard" | "/teacher") => {
+    setIsMenuOpen(false);
+    router.push(href as Route);
+  };
 
   const handleSignOut = async () => {
     if (!user || isSigningOut) {
@@ -134,29 +180,10 @@ export function UserNav() {
       } as const)[role]
     : { color: "bg-slate-700/40 text-slate-400 border-slate-600/30", label: "No Role" };
 
+  const dashboardHref = role === "TEACHER" ? "/teacher" : "/dashboard";
+
   return (
     <div className="flex items-center gap-2.5">
-      {/* Identity block */}
-      <div className="flex items-center gap-2.5">
-        {/* Avatar */}
-        <div className="flex h-7 w-7 select-none items-center justify-center rounded-full border border-brand/25 bg-brand/12 text-[10px] font-bold tracking-wide text-brand-muted">
-          {initials}
-        </div>
-
-        {/* Name + role */}
-        <div className="hidden flex-col items-start sm:flex">
-          <span className="text-xs font-medium leading-tight text-slate-300">{displayName}</span>
-          <span
-            className={`rounded-full border px-1.5 py-px text-[9px] font-bold uppercase tracking-label leading-none ${roleMeta.color}`}
-          >
-            {roleMeta.label}
-          </span>
-        </div>
-      </div>
-
-      {/* Divider */}
-      <div className="h-4 w-px bg-slate-800" />
-
       {authError && (
         <button
           onClick={retry}
@@ -167,16 +194,96 @@ export function UserNav() {
         </button>
       )}
 
-      {/* Sign out */}
-      <button
-        onClick={handleSignOut}
-        disabled={isSigningOut || !user}
-        className="flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs text-slate-500 transition-colors hover:bg-slate-800/70 hover:text-slate-200"
-        aria-label="Sign out"
-      >
-        <LogOut className="h-3.5 w-3.5" />
-        <span className="hidden sm:inline">{isSigningOut ? "Signing out..." : "Sign out"}</span>
-      </button>
+      <div ref={dropdownRef} className="relative">
+        <button
+          type="button"
+          onClick={() => {
+            setIsMenuOpen((prev) => !prev);
+          }}
+          className="group flex items-center gap-2.5 rounded-xl border border-slate-800/80 bg-slate-900/50 px-2.5 py-1.5 text-left transition-colors hover:border-slate-700 hover:bg-slate-900"
+          aria-haspopup="menu"
+          aria-expanded={isMenuOpen}
+          aria-label="Open user menu"
+        >
+          <div className="flex h-7 w-7 select-none items-center justify-center rounded-full border border-brand/25 bg-brand/12 text-[10px] font-bold tracking-wide text-brand-muted">
+            {initials}
+          </div>
+
+          <div className="hidden min-w-0 flex-col items-start sm:flex">
+            <span className="max-w-40 truncate text-xs font-medium leading-tight text-slate-300">
+              {displayName}
+            </span>
+            <span
+              className={`rounded-full border px-1.5 py-px text-[9px] font-bold uppercase tracking-label leading-none ${roleMeta.color}`}
+            >
+              {roleMeta.label}
+            </span>
+          </div>
+
+          <ChevronDown
+            className={`h-3.5 w-3.5 text-slate-500 transition-transform group-hover:text-slate-300 ${
+              isMenuOpen ? "rotate-180" : ""
+            }`}
+          />
+        </button>
+
+        {isMenuOpen && (
+          <div
+            role="menu"
+            aria-label="User options"
+            className="absolute right-0 z-50 mt-2 w-56 overflow-hidden rounded-xl border border-slate-800 bg-slate-950/95 p-1.5 shadow-[0_16px_38px_rgba(2,6,23,0.55)] backdrop-blur-sm"
+          >
+            <button
+              type="button"
+              onClick={() => {
+                handleMenuNavigate("/profile");
+              }}
+              className="flex w-full items-center rounded-lg px-3 py-2 text-left text-sm text-slate-200 transition-colors hover:bg-slate-800/70"
+              role="menuitem"
+            >
+              My profile
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                handleMenuNavigate(dashboardHref);
+              }}
+              className="flex w-full items-center rounded-lg px-3 py-2 text-left text-sm text-slate-200 transition-colors hover:bg-slate-800/70"
+              role="menuitem"
+            >
+              Dashboard
+            </button>
+
+            <button
+              type="button"
+              disabled
+              className="flex w-full cursor-not-allowed items-center rounded-lg px-3 py-2 text-left text-sm text-slate-500"
+              role="menuitem"
+              aria-disabled="true"
+            >
+              Settings
+              <span className="ml-2 text-[10px] uppercase tracking-label text-slate-600">Coming soon</span>
+            </button>
+
+            <div className="my-1 h-px bg-slate-800" />
+
+            <button
+              type="button"
+              onClick={() => {
+                setIsMenuOpen(false);
+                void handleSignOut();
+              }}
+              disabled={isSigningOut || !user}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-rose-300 transition-colors hover:bg-rose-900/20 disabled:cursor-not-allowed disabled:opacity-60"
+              role="menuitem"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              {isSigningOut ? "Signing out..." : "Sign out"}
+            </button>
+          </div>
+        )}
+      </div>
 
       {signOutError && <span className="hidden text-[11px] text-amber-300 sm:inline">{signOutError}</span>}
     </div>

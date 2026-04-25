@@ -4,19 +4,26 @@ import { useState } from "react";
 import type { Assessment, AssessmentAttempt, Question } from "@/types/learning";
 import { Button } from "@/components/ui/button";
 import { CheckCircle, XCircle, HelpCircle, RotateCcw } from "lucide-react";
+import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 interface Props {
   assessment?: Assessment & { questions: Question[] };
   attempts?: AssessmentAttempt[];
   onStartAttempt?: () => void;
+  trackingContext?: {
+    enabled: boolean;
+    studentId: string | null;
+    submissionId: string;
+  };
 }
 
 type QuizOption = { id: string; option_text: string; is_correct: boolean };
 type QuizQuestion = { id: string; question_text: string; options?: QuizOption[] };
 
-export function QuizSession({ assessment }: Props) {
+export function QuizSession({ assessment, trackingContext }: Props) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [submitted, setSubmitted] = useState(false);
+  const [isSubmittingAttempt, setIsSubmittingAttempt] = useState(false);
 
   if (!assessment) {
     return (
@@ -63,6 +70,83 @@ export function QuizSession({ assessment }: Props) {
   const resetQuiz = () => {
     setAnswers({});
     setSubmitted(false);
+  };
+
+  const submitQuizAttempt = async () => {
+    try {
+      if (!assessment || !trackingContext?.enabled || !trackingContext.studentId) {
+        return;
+      }
+
+      const attemptResultMap = new Map<string, boolean>();
+      questions.forEach((question) => {
+        const selectedOptionId = answers[question.id];
+        const isCorrect =
+          question.options?.some((opt) => opt.id === selectedOptionId && opt.is_correct) ?? false;
+        attemptResultMap.set(question.id, isCorrect);
+      });
+
+      const attemptCorrectCount = Array.from(attemptResultMap.values()).filter(Boolean).length;
+      const attemptTotal = questions.length;
+      const attemptPercentage =
+        attemptTotal > 0 ? Math.round((attemptCorrectCount / attemptTotal) * 100) : 0;
+
+      const assessmentAny = assessment as unknown as {
+        id: string;
+        randomization_mode?: number | null;
+        sample_percentage?: number | null;
+      };
+
+      const randomizationMode =
+        typeof assessmentAny.randomization_mode === "number" &&
+        [0, 1, 2].includes(assessmentAny.randomization_mode)
+          ? assessmentAny.randomization_mode
+          : 0;
+
+      const samplePercentage =
+        typeof assessmentAny.sample_percentage === "number"
+          ? assessmentAny.sample_percentage
+          : null;
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const supabaseAny = createSupabaseBrowserClient() as any;
+      const { error: insertErr } = await supabaseAny.from("student_quiz_attempt").insert({
+        student_id: trackingContext.studentId,
+        submission_id: trackingContext.submissionId,
+        assessment_id: assessmentAny.id,
+        score_percentage: attemptPercentage,
+        correct_count: attemptCorrectCount,
+        total_questions: attemptTotal,
+        randomization_mode: randomizationMode,
+        sample_percentage: samplePercentage,
+        shown_question_ids: questions.map((question) => question.id),
+        selected_answers: answers,
+      });
+
+      if (insertErr) {
+        throw insertErr;
+      }
+    } catch (submitErr) {
+      console.error("[QuizSession] Failed to track quiz attempt:", submitErr);
+    } finally {
+      // no-op
+    }
+  };
+
+  const handleSubmitQuiz = async () => {
+    try {
+      if (submitted || isSubmittingAttempt) {
+        return;
+      }
+
+      setIsSubmittingAttempt(true);
+      setSubmitted(true);
+      await submitQuizAttempt();
+    } catch (handlerErr) {
+      console.error("[QuizSession] Submit handler failed:", handlerErr);
+    } finally {
+      setIsSubmittingAttempt(false);
+    }
   };
 
   if (totalQuestions === 0) {
@@ -249,8 +333,10 @@ export function QuizSession({ assessment }: Props) {
       {/* ── Actions ── */}
       <div className="flex flex-wrap items-center gap-3 pt-1">
         <Button
-          onClick={() => setSubmitted(true)}
-          disabled={!allAnswered || submitted}
+          onClick={() => {
+            void handleSubmitQuiz();
+          }}
+          disabled={!allAnswered || submitted || isSubmittingAttempt}
           className="bg-mastery-mastered text-white shadow-sm shadow-mastery-mastered/20 hover:bg-mastery-mastered/90 disabled:opacity-40"
         >
           Submit Quiz
