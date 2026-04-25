@@ -87,6 +87,19 @@ function formatPercent(value: number | null): string {
   return `${Math.round(value)}%`;
 }
 
+function formatDelta(value: number | null): string {
+  if (value === null || Number.isNaN(value)) return "-";
+  const rounded = Math.round(value);
+  return rounded >= 0 ? `+${rounded}%` : `${rounded}%`;
+}
+
+function deltaClass(value: number | null): string {
+  if (value === null) return "text-slate-300";
+  if (value > 0) return "text-emerald-400";
+  if (value < 0) return "text-red-400";
+  return "text-slate-400";
+}
+
 function formatDateTime(value: string | null): string {
   if (!value) {
     return "-";
@@ -124,28 +137,28 @@ function getOverallRingTheme(score: number | null): {
 } {
   if (score === null || Number.isNaN(score)) {
     return {
-      arc: "rgba(100, 116, 139, 0.9)",
-      textClass: "text-slate-300",
+      arc: "rgba(100, 116, 139, 0.7)",
+      textClass: "text-slate-400",
     };
   }
 
   if (score <= 39) {
     return {
-      arc: "rgba(248, 113, 113, 0.95)",
-      textClass: "text-red-300",
+      arc: "rgba(239, 68, 68, 0.72)",
+      textClass: "text-red-400",
     };
   }
 
   if (score <= 69) {
     return {
-      arc: "rgba(251, 146, 60, 0.95)",
-      textClass: "text-orange-300",
+      arc: "rgba(249, 115, 22, 0.72)",
+      textClass: "text-orange-400",
     };
   }
 
   return {
-    arc: "rgba(74, 222, 128, 0.95)",
-    textClass: "text-emerald-300",
+    arc: "rgba(34, 197, 94, 0.72)",
+    textClass: "text-emerald-400",
   };
 }
 
@@ -306,6 +319,18 @@ export default async function ProfilePage() {
   const averageScore =
     quizScoredAttempts.length > 0
       ? quizScoredAttempts.reduce((sum, score) => sum + score, 0) / quizScoredAttempts.length
+      : null;
+
+  const bestScore = quizScoredAttempts.length > 0 ? Math.max(...quizScoredAttempts) : null;
+
+  const latestAttemptScore =
+    quizAttemptRows.length > 0 && typeof quizAttemptRows[0].score_percentage === "number"
+      ? quizAttemptRows[0].score_percentage
+      : null;
+
+  const latestVsAverageDelta =
+    latestAttemptScore !== null && averageScore !== null
+      ? latestAttemptScore - averageScore
       : null;
 
   const recentlyVisited: RecentlyVisitedItem[] = recentVisitRows.map((row) => {
@@ -635,7 +660,7 @@ export default async function ProfilePage() {
                     <p className="text-xs font-semibold uppercase tracking-label text-slate-500">Overall average</p>
                     <div className="mt-3 flex items-center gap-4">
                       <div
-                        className="relative h-14 w-14 rounded-full"
+                        className="relative h-14 w-14 shrink-0 rounded-full"
                         style={{
                           background: `conic-gradient(${overallRingTheme.arc} ${averageScoreForRing}%, rgba(51, 65, 85, 0.75) ${averageScoreForRing}% 100%)`,
                         }}
@@ -648,6 +673,25 @@ export default async function ProfilePage() {
                       <div className="space-y-0.5">
                         <p className="text-sm font-medium text-slate-200">Average quiz score</p>
                         <p className="text-xs text-slate-500">Across {quizAttemptRows.length.toLocaleString()} attempts</p>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-2 gap-1.5">
+                      <div className="rounded-md border border-slate-800/60 bg-slate-900/60 px-2.5 py-2">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Best score</p>
+                        <p className="mt-0.5 text-sm font-bold text-slate-100">{formatPercent(bestScore)}</p>
+                      </div>
+                      <div className="rounded-md border border-slate-800/60 bg-slate-900/60 px-2.5 py-2">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Total attempts</p>
+                        <p className="mt-0.5 text-sm font-bold text-slate-100">{quizAttemptCount.toLocaleString()}</p>
+                      </div>
+                      <div className="rounded-md border border-slate-800/60 bg-slate-900/60 px-2.5 py-2">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Latest attempt</p>
+                        <p className="mt-0.5 text-sm font-bold text-slate-100">{formatPercent(latestAttemptScore)}</p>
+                      </div>
+                      <div className="rounded-md border border-slate-800/60 bg-slate-900/60 px-2.5 py-2">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Latest vs avg</p>
+                        <p className={`mt-0.5 text-sm font-bold ${deltaClass(latestVsAverageDelta)}`}>{formatDelta(latestVsAverageDelta)}</p>
                       </div>
                     </div>
                   </div>
