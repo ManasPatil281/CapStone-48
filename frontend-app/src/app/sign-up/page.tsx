@@ -23,44 +23,50 @@ export default function SignUpPage() {
 
     const supabase = createSupabaseBrowserClient();
 
-    // Sign up the user
-    const { data, error: signUpError } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          display_name: displayName || email.split("@")[0]
+    try {
+      // Sign up the user
+      const { data, error: signUpError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            display_name: displayName || email.split("@")[0]
+          }
         }
+      });
+
+      if (signUpError) {
+        throw signUpError;
       }
-    });
 
-    if (signUpError) {
-      setError(signUpError.message);
+      if (!data.user) {
+        throw new Error("Failed to create user account");
+      }
+
+      // Current generated DB types are incomplete for this insert shape.
+      const supabaseAny = supabase as any;
+
+      // Create user_profile record
+      const { error: profileError } = await supabaseAny.from("user_profile").insert({
+        id: data.user.id,
+        role: "STUDENT",
+        full_name: displayName || email.split("@")[0]
+      });
+
+      if (profileError) {
+        console.error("Failed to create user profile:", profileError);
+        // Continue anyway - profile can be created later
+      }
+
+      // Success - redirect to dashboard
+      router.push("/dashboard");
+      router.refresh();
+    } catch (signUpErr: unknown) {
+      const message = signUpErr instanceof Error ? signUpErr.message : "Failed to create account. Please try again.";
+      setError(message);
+    } finally {
       setIsLoading(false);
-      return;
     }
-
-    if (!data.user) {
-      setError("Failed to create user account");
-      setIsLoading(false);
-      return;
-    }
-
-    // Create user_profile record
-    const { error: profileError } = await supabase.from("user_profile").insert({
-      id: data.user.id,
-      role: "STUDENT",
-      full_name: displayName || email.split("@")[0]
-    });
-
-    if (profileError) {
-      console.error("Failed to create user profile:", profileError);
-      // Continue anyway - profile can be created later
-    }
-
-    // Success - redirect to dashboard
-    router.push("/dashboard");
-    router.refresh();
   };
 
   return (

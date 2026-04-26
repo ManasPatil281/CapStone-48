@@ -13,6 +13,7 @@ interface Props {
   nodes: RoadmapNode[];
   edges: RoadmapEdge[];
   mostTakenPathNodeIds?: string[];
+  nodeVisitCounts?: Record<string, number>;
 }
 
 const statusColorMap: Record<RoadmapNode["status"], string> = {
@@ -23,9 +24,8 @@ const statusColorMap: Record<RoadmapNode["status"], string> = {
 };
 
 const mostTakenPathColor = "#fbbf24"; // Amber/gold for highlight
-const HARDCODED_POPULAR_PATH_SLUGS = ["arrays", "pointers-references", "linked-list", "stack", "binary-tree"] as const;
 
-export function CourseRoadmap({ courseSlug = "dsa", nodes, edges, mostTakenPathNodeIds = [] }: Props) {
+export function CourseRoadmap({ courseSlug = "dsa", nodes, edges, mostTakenPathNodeIds = [], nodeVisitCounts = {} }: Props) {
   const router = useRouter();
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
 
@@ -115,22 +115,7 @@ export function CourseRoadmap({ courseSlug = "dsa", nodes, edges, mostTakenPathN
     return map;
   }, [nodeById, nodes, normalizedEdges]);
 
-  const resolvedMostTakenPathNodeIds = useMemo(() => {
-    if (mostTakenPathNodeIds.length > 0) {
-      return mostTakenPathNodeIds;
-    }
-
-    const slugToNodeId = new Map<string, string>();
-    nodes.forEach((node) => {
-      if (node.slug) {
-        slugToNodeId.set(node.slug, node.id);
-      }
-    });
-
-    return HARDCODED_POPULAR_PATH_SLUGS
-      .map((slug) => slugToNodeId.get(slug))
-      .filter((id): id is string => Boolean(id));
-  }, [mostTakenPathNodeIds, nodes]);
+  const resolvedMostTakenPathNodeIds = useMemo(() => mostTakenPathNodeIds, [mostTakenPathNodeIds]);
 
   const flowNodes = useMemo(
     () =>
@@ -138,9 +123,10 @@ export function CourseRoadmap({ courseSlug = "dsa", nodes, edges, mostTakenPathN
         const isOnPath = resolvedMostTakenPathNodeIds.includes(node.id);
         const baseColor = statusColorMap[node.status];
 
+        const visitCount = nodeVisitCounts[node.id] ?? 0;
         return {
           id: node.id,
-          data: { label: CourseNodeContent(node, isOnPath), status: node.status, slug: node.slug },
+          data: { label: CourseNodeContent(node, isOnPath, visitCount), status: node.status, slug: node.slug },
           position: positionMap.get(node.id) ?? { x: 80, y: 70 },
           sourcePosition: Position.Right,
           targetPosition: Position.Left,
@@ -152,11 +138,11 @@ export function CourseRoadmap({ courseSlug = "dsa", nodes, edges, mostTakenPathN
             color: "white",
             boxShadow: isOnPath ? `0 0 20px ${mostTakenPathColor}80` : "none",
             fontWeight: isOnPath ? "600" : "500",
-            cursor: node.slug ? "pointer" : "default"
+            cursor: "pointer"
           }
         };
       }),
-    [nodes, positionMap, resolvedMostTakenPathNodeIds]
+    [nodes, nodeVisitCounts, positionMap, resolvedMostTakenPathNodeIds]
   );
 
   const flowEdges = useMemo(
@@ -187,10 +173,7 @@ export function CourseRoadmap({ courseSlug = "dsa", nodes, edges, mostTakenPathN
   }, [flowEdges, flowNodes, rfInstance]);
 
   const handleNodeClick = useCallback<NodeMouseHandler>((_, node) => {
-    const slug = (node.data as { slug?: string } | undefined)?.slug;
-    if (slug) {
-      router.push(`/courses/${courseSlug}/${slug}` as Route);
-    }
+    router.push(`/courses/${courseSlug}?lo=${node.id}` as Route);
   }, [courseSlug, router]);
 
   return (
@@ -233,12 +216,15 @@ export function CourseRoadmap({ courseSlug = "dsa", nodes, edges, mostTakenPathN
   );
 }
 
-function CourseNodeContent(node: RoadmapNode, isOnPath: boolean) {
+function CourseNodeContent(node: RoadmapNode, isOnPath: boolean, visitCount: number) {
   return (
     <div className="flex flex-col gap-1">
       <p className="text-sm font-semibold">{node.title}</p>
       <p className="text-xs text-slate-400">Level: {"●".repeat(node.difficulty)}</p>
       <p className="text-xs text-slate-500">{node.estimatedTime} min</p>
+      {visitCount > 0 && (
+        <p className="text-xs text-slate-500">{visitCount} student{visitCount !== 1 ? "s" : ""}</p>
+      )}
       {isOnPath && <p className="text-xs font-bold text-yellow-400">★ Popular Path</p>}
     </div>
   );
