@@ -1,8 +1,10 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { RoadmapEdge, RoadmapNode } from "@/components/lo/RoadmapTree";
 import type { LearningObject } from "@/types/learning";
 import { CourseDashboardClient } from "./CourseDashboardClient";
+import { computePopularPath } from "@/lib/popularity/computePopularPath";
 
 interface PageProps {
   params: {
@@ -94,6 +96,7 @@ export default async function CourseLandingPage({ params }: PageProps) {
       submissionId: item.id,
       submissionTitle: item.title ?? "Untitled Submission",
       loTitle: item.learning_object?.title ?? "Untitled LO",
+      learningObjectId: item.learning_object_id,
       teacherName: teacherNameById.get(item.teacher_id) ?? "Unknown Teacher",
       notes: item.notes ?? ""
     }));
@@ -127,12 +130,28 @@ export default async function CourseLandingPage({ params }: PageProps) {
 
   const edges = Array.from(edgeMap.values());
 
+  const { data: visitRows } = loIds.length
+    ? await (supabase as any)
+        .from("student_submission_visit")
+        .select("student_id, learning_object_id, started_at")
+        .in("learning_object_id", loIds)
+    : { data: [] };
+
+  const popularity = computePopularPath(visitRows ?? [], loIds, edges);
+
   return (
-    <CourseDashboardClient
-      courseSlug={course.slug}
-      courseTitle={course.title ?? course.slug.toUpperCase()}
-      submissions={submissionTiles}
-      roadmap={{ nodes, edges }}
-    />
+    <Suspense>
+      <CourseDashboardClient
+        courseSlug={course.slug}
+        courseTitle={course.title ?? course.slug.toUpperCase()}
+        submissions={submissionTiles}
+        roadmap={{
+          nodes,
+          edges,
+          mostTakenPathNodeIds: popularity.popularNodeIds,
+          nodeVisitCounts: popularity.nodeVisitCounts,
+        }}
+      />
+    </Suspense>
   );
 }

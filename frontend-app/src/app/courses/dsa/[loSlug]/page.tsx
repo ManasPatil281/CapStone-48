@@ -4,6 +4,7 @@ import type { AssessmentAttempt, ContentTabData, LearningObjectContent, Learning
 import { LOHeader } from "@/components/lo/LOHeader";
 import { LODetailTabs } from "@/components/lo/LODetailTabs";
 import type { RoadmapEdge, RoadmapNode } from "@/components/lo/RoadmapTree";
+import { computePopularPath } from "@/lib/popularity/computePopularPath";
 
 interface PageProps {
   params: {
@@ -127,7 +128,7 @@ export default async function LODetailPage({ params }: PageProps) {
     progressMap
   });
 
-  let courseRoadmapData: { nodes: RoadmapNode[]; edges: RoadmapEdge[]; mostTakenPathNodeIds?: string[] } | undefined;
+  let courseRoadmapData: { nodes: RoadmapNode[]; edges: RoadmapEdge[]; mostTakenPathNodeIds?: string[]; nodeVisitCounts?: Record<string, number> } | undefined;
 
   if (supabase) {
     const { data: dsaCourseRow } = await supabase.from("course").select("id").eq("slug", "dsa").maybeSingle();
@@ -182,8 +183,19 @@ export default async function LODetailPage({ params }: PageProps) {
 
         const edges: RoadmapEdge[] = Array.from(edgeMap.values());
 
-        // TODO: Replace hardcoded/empty popular path with learner analytics-derived path.
-        courseRoadmapData = { nodes, edges };
+        const { data: visitRows } = await (supabase as any)
+          .from("student_submission_visit")
+          .select("student_id, learning_object_id, started_at")
+          .in("learning_object_id", courseLoIds);
+
+        const popularity = computePopularPath(visitRows ?? [], courseLoIds, edges);
+
+        courseRoadmapData = {
+          nodes,
+          edges,
+          mostTakenPathNodeIds: popularity.popularNodeIds,
+          nodeVisitCounts: popularity.nodeVisitCounts,
+        };
       }
     }
   }

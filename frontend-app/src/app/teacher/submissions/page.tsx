@@ -13,6 +13,8 @@ type SubmissionCard = {
   lo_title: string;
 };
 
+const SOFT_DELETE_NOTE_PREFIX = "[SOFT_DELETED]";
+
 export default async function TeacherMySubmissionsPage() {
   const user = await requireRole(["TEACHER"]);
   const supabase = createSupabaseServerClient();
@@ -29,16 +31,18 @@ export default async function TeacherMySubmissionsPage() {
     console.error("[TeacherMySubmissionsPage] Failed to load submissions:", error);
   }
 
-  const initialSubmissions: SubmissionCard[] = (data ?? []).map((row: any) => ({
-    id: row.id,
-    title: row.title,
-    notes: row.notes,
-    status: row.status,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    course_title: row.course?.title ?? "Unknown Course",
-    lo_title: row.learning_object?.title ?? "Unknown LO",
-  }));
+  const initialSubmissions: SubmissionCard[] = (data ?? [])
+    .map((row: any) => ({
+      id: row.id,
+      title: row.title,
+      notes: row.notes,
+      status: row.status,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      course_title: row.course?.title ?? "Unknown Course",
+      lo_title: row.learning_object?.title ?? "Unknown LO",
+    }))
+    .filter((row) => !(row.notes ?? "").startsWith(SOFT_DELETE_NOTE_PREFIX));
 
   return <MySubmissionsClient teacherId={user.id} initialSubmissions={initialSubmissions} />;
 }

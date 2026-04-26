@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -20,12 +20,17 @@ export type FlashcardPair = {
 };
 
 export type QuizQuestionDraft = {
+  existingId?: string;
   questionText: string;
   options: [string, string, string, string];
   correctOptionIndex: number | null;
 };
 
 export type ContentItem = {
+  // Present when this item was loaded from an existing DB row (edit mode).
+  // Used to UPDATE in-place rather than DELETE + INSERT, preserving
+  // student_content_block_time foreign-key references.
+  existingId?: string;
   deliveryTypeId: string;
   deliveryTypeCode: string;
   title: string;
@@ -168,6 +173,8 @@ export function SubmissionForm({ mode, initialData, successRedirect }: Submissio
   const [contentItems, setContentItems] = useState<ContentItem[]>(
     normalizeInitialContentItems(initialData?.contentItems)
   );
+  const submitLockRef = useRef(false);
+  const failedCreateSubmissionIdRef = useRef<string | null>(null);
 
   const isEditMode = mode === "edit";
   const submissionId = initialData?.submissionId ?? "";
@@ -555,71 +562,11 @@ export function SubmissionForm({ mode, initialData, successRedirect }: Submissio
     supabase: any,
     targetSubmissionId: string
   ) {
-    const { data: assessmentRows, error: assessmentFetchErr } = await supabase
-      .from("teacher_lo_submission_assessment")
-      .select("id")
-      .eq("submission_id", targetSubmissionId);
-
-    if (assessmentFetchErr) {
-      throw assessmentFetchErr;
-    }
-
-    const assessmentIds = (assessmentRows ?? []).map((row: { id: string }) => row.id);
-
-    let questionIds: string[] = [];
-
-    if (assessmentIds.length > 0) {
-      const { data: questionRows, error: questionFetchErr } = await supabase
-        .from("teacher_lo_submission_question")
-        .select("id")
-        .in("assessment_id", assessmentIds);
-
-      if (questionFetchErr) {
-        throw questionFetchErr;
-      }
-
-      questionIds = (questionRows ?? []).map((row: { id: string }) => row.id);
-    }
-
-    if (questionIds.length > 0) {
-      const { error: optionDeleteErr } = await supabase
-        .from("teacher_lo_submission_question_option")
-        .delete()
-        .in("question_id", questionIds);
-
-      if (optionDeleteErr) {
-        throw optionDeleteErr;
-      }
-    }
-
-    if (assessmentIds.length > 0) {
-      const { error: questionDeleteErr } = await supabase
-        .from("teacher_lo_submission_question")
-        .delete()
-        .in("assessment_id", assessmentIds);
-
-      if (questionDeleteErr) {
-        throw questionDeleteErr;
-      }
-    }
-
-    const { error: assessmentDeleteErr } = await supabase
-      .from("teacher_lo_submission_assessment")
-      .delete()
-      .eq("submission_id", targetSubmissionId);
-
-    if (assessmentDeleteErr) {
-      throw assessmentDeleteErr;
-    }
-
-    const { error: contentDeleteErr } = await supabase
-      .from("teacher_lo_submission_content")
-      .delete()
-      .eq("submission_id", targetSubmissionId);
-
-    if (contentDeleteErr) {
-      throw contentDeleteErr;
-    }
+    // Assessment rows are NOT deleted here because student_quiz_attempt holds
+    // FK references to teacher_lo_submission_assessment.id.  Quiz is reconciled
+    // (update / question-reconcile) in handleSubmit after this function returns.
+    //
+    // Content rows are NOT deleted here for the same reason (student_content_block_time).
 
     const { error: edgeDeleteErr } = await supabase
       .from("teacher_lo_submission_edge")
@@ -638,10 +585,25 @@ export function SubmissionForm({ mode, initialData, successRedirect }: Submissio
       return;
     }
 
+    if (!isEditMode && failedCreateSubmissionIdRef.current) {
+      setError(
+        `A previous save already created submission ${failedCreateSubmissionIdRef.current}. Open My Submissions and edit that record instead of creating a new one.`
+      );
+      return;
+    }
+
+    if (submitLockRef.current || submitting) {
+      console.warn("[SubmissionForm] Blocked duplicate submit attempt.");
+      return;
+    }
+
+    submitLockRef.current = true;
+
     setSubmitting(true);
     setError(null);
 
     const supabase = createSupabaseBrowserClient();
+    let createdSubmissionId: string | null = null;
 
     try {
       let loId = selectedLoId;
@@ -742,6 +704,7 @@ export function SubmissionForm({ mode, initialData, successRedirect }: Submissio
         }
 
         activeSubmissionId = createdSubmission.id;
+        createdSubmissionId = createdSubmission.id;
       }
 
       const quizPayload = validateQuizContent(contentItems);
@@ -749,37 +712,135 @@ export function SubmissionForm({ mode, initialData, successRedirect }: Submissio
         (item) => item.deliveryTypeId && item.deliveryTypeCode !== "QUIZ"
       );
 
-      let sequenceOrder = 1;
-
-      for (const item of nonQuizItems) {
-        const built = buildContentJson(item);
-        if (!built) {
-          continue;
-        }
-
-        const recommendedTimeSeconds = parsePositiveIntegerOrNull(
-          item.recommendedTimeSeconds,
-          "Recommended time"
-        );
+      if (isEditMode) {
+        // ── Edit mode: reconcile content blocks ────────────────────────────────
+        // Preserve existing row IDs so student_content_block_time FK references
+        // remain valid.  Rows not present in the new form are soft-deleted
+        // (is_active = false) rather than hard-deleted.
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { error: contentErr } = await (supabase as any)
+        const { data: existingContentRows, error: existingContentErr } = await (supabase as any)
           .from("teacher_lo_submission_content")
-          .insert({
-            submission_id: activeSubmissionId,
-            delivery_type_id: item.deliveryTypeId,
-            title: item.title.trim() || built.defaultTitle,
-            content_json: built.content_json,
-            sequence_order: sequenceOrder,
-            is_active: true,
-            recommended_time_seconds: recommendedTimeSeconds,
-          });
+          .select("id")
+          .eq("submission_id", activeSubmissionId);
 
-        if (contentErr) {
-          throw contentErr;
+        if (existingContentErr) {
+          console.error("[SubmissionForm] Failed to fetch existing content rows:", existingContentErr);
+          throw existingContentErr;
         }
 
-        sequenceOrder += 1;
+        const existingContentIds = new Set<string>(
+          (existingContentRows ?? []).map((r: { id: string }) => r.id)
+        );
+        const handledContentIds = new Set<string>();
+
+        let sequenceOrder = 1;
+
+        for (const item of nonQuizItems) {
+          const built = buildContentJson(item);
+          if (!built) continue;
+
+          const recommendedTimeSeconds = parsePositiveIntegerOrNull(
+            item.recommendedTimeSeconds,
+            "Recommended time"
+          );
+
+          if (item.existingId && existingContentIds.has(item.existingId)) {
+            // UPDATE: keep the same row ID → student tracking FKs stay intact
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { error: contentErr } = await (supabase as any)
+              .from("teacher_lo_submission_content")
+              .update({
+                delivery_type_id: item.deliveryTypeId,
+                title: item.title.trim() || built.defaultTitle,
+                content_json: built.content_json,
+                sequence_order: sequenceOrder,
+                is_active: true,
+                recommended_time_seconds: recommendedTimeSeconds,
+              })
+              .eq("id", item.existingId);
+
+            if (contentErr) {
+              console.error("[SubmissionForm] Content update failed:", contentErr);
+              throw contentErr;
+            }
+
+            handledContentIds.add(item.existingId);
+          } else {
+            // INSERT: new block with no prior tracking history
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { error: contentErr } = await (supabase as any)
+              .from("teacher_lo_submission_content")
+              .insert({
+                submission_id: activeSubmissionId,
+                delivery_type_id: item.deliveryTypeId,
+                title: item.title.trim() || built.defaultTitle,
+                content_json: built.content_json,
+                sequence_order: sequenceOrder,
+                is_active: true,
+                recommended_time_seconds: recommendedTimeSeconds,
+              });
+
+            if (contentErr) {
+              console.error("[SubmissionForm] Content insert failed:", contentErr);
+              throw contentErr;
+            }
+          }
+
+          sequenceOrder += 1;
+        }
+
+        // Soft-delete content rows that the teacher removed from the form.
+        // Hard-delete would violate student_content_block_time_content_id_fkey
+        // if any student has already tracked time on these blocks.
+        for (const existingId of existingContentIds) {
+          if (!handledContentIds.has(existingId)) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { error: softDeleteErr } = await (supabase as any)
+              .from("teacher_lo_submission_content")
+              .update({ is_active: false })
+              .eq("id", existingId);
+
+            if (softDeleteErr) {
+              console.error("[SubmissionForm] Content soft-delete failed:", softDeleteErr);
+              throw softDeleteErr;
+            }
+          }
+        }
+      } else {
+        // ── Create mode: insert all content rows fresh ─────────────────────────
+        let sequenceOrder = 1;
+
+        for (const item of nonQuizItems) {
+          const built = buildContentJson(item);
+          if (!built) {
+            continue;
+          }
+
+          const recommendedTimeSeconds = parsePositiveIntegerOrNull(
+            item.recommendedTimeSeconds,
+            "Recommended time"
+          );
+
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { error: contentErr } = await (supabase as any)
+            .from("teacher_lo_submission_content")
+            .insert({
+              submission_id: activeSubmissionId,
+              delivery_type_id: item.deliveryTypeId,
+              title: item.title.trim() || built.defaultTitle,
+              content_json: built.content_json,
+              sequence_order: sequenceOrder,
+              is_active: true,
+              recommended_time_seconds: recommendedTimeSeconds,
+            });
+
+          if (contentErr) {
+            throw contentErr;
+          }
+
+          sequenceOrder += 1;
+        }
       }
 
       if (quizPayload) {
@@ -787,85 +848,236 @@ export function SubmissionForm({ mode, initialData, successRedirect }: Submissio
           (resolvedSubmissionTitle || "Submission").trim() || "Submission"
         } Quiz`;
 
+        // Reuse an existing assessment if present so edit/create paths never
+        // create additional assessment rows for the same submission.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: assessmentRow, error: assessmentErr } = await (supabase as any)
+        const { data: existingAssessmentRowsRaw, error: existingAssessmentErr } = await (supabase as any)
           .from("teacher_lo_submission_assessment")
-          .insert({
-            submission_id: activeSubmissionId,
-            title: assessmentTitle,
-            pass_percentage: 70,
-            max_attempts: 3,
-            randomization_mode: quizPayload.randomizationMode,
-            sample_percentage: quizPayload.samplePercentage,
-          })
           .select("id")
-          .single();
+          .eq("submission_id", activeSubmissionId);
 
-        if (assessmentErr) {
-          throw assessmentErr;
+        if (existingAssessmentErr) {
+          throw existingAssessmentErr;
         }
 
-        for (const question of quizPayload.questions) {
+        const existingAssessmentIds = (existingAssessmentRowsRaw ?? []).map(
+          (row: { id: string }) => row.id
+        );
+
+        if (existingAssessmentIds.length > 1) {
+          console.error("[SubmissionForm] Duplicate assessments detected for submission:", {
+            submissionId: activeSubmissionId,
+            assessmentIds: existingAssessmentIds,
+          });
+        }
+
+        const existingAssessmentId =
+          quizPayload.item.existingId && existingAssessmentIds.includes(quizPayload.item.existingId)
+            ? quizPayload.item.existingId
+            : existingAssessmentIds[0] ?? null;
+
+        if (existingAssessmentId) {
+          // ── Edit: UPDATE assessment in place, reconcile questions ──────────────
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { data: questionRow, error: questionErr } = await (supabase as any)
+          const { error: assessmentUpdateErr } = await (supabase as any)
+            .from("teacher_lo_submission_assessment")
+            .update({
+              title: assessmentTitle,
+              randomization_mode: quizPayload.randomizationMode,
+              sample_percentage: quizPayload.samplePercentage,
+            })
+            .eq("id", existingAssessmentId);
+
+          if (assessmentUpdateErr) throw assessmentUpdateErr;
+
+          // Fetch current question IDs from DB for this assessment
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: dbQuestionRows, error: dbQuestionsErr } = await (supabase as any)
             .from("teacher_lo_submission_question")
+            .select("id")
+            .eq("assessment_id", existingAssessmentId);
+
+          if (dbQuestionsErr) throw dbQuestionsErr;
+
+          const dbQuestionIds = new Set<string>(
+            (dbQuestionRows ?? []).map((r: { id: string }) => r.id)
+          );
+
+          const handledDbQuestionIds = new Set<string>();
+
+          for (const question of quizPayload.questions) {
+            if (question.existingId && dbQuestionIds.has(question.existingId)) {
+              // UPDATE question text, delete+reinsert options (no tracking FK on options)
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const { error: questionUpdateErr } = await (supabase as any)
+                .from("teacher_lo_submission_question")
+                .update({ question_text: question.questionText.trim() })
+                .eq("id", question.existingId);
+
+              if (questionUpdateErr) throw questionUpdateErr;
+
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const { error: optionDeleteErr } = await (supabase as any)
+                .from("teacher_lo_submission_question_option")
+                .delete()
+                .eq("question_id", question.existingId);
+
+              if (optionDeleteErr) throw optionDeleteErr;
+
+              const updatedOptions = question.options.map((optionText, optionIndex) => ({
+                question_id: question.existingId,
+                option_text: optionText.trim(),
+                is_correct: question.correctOptionIndex === optionIndex,
+              }));
+
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const { error: optionInsertErr } = await (supabase as any)
+                .from("teacher_lo_submission_question_option")
+                .insert(updatedOptions);
+
+              if (optionInsertErr) throw optionInsertErr;
+
+              handledDbQuestionIds.add(question.existingId);
+            } else {
+              // INSERT: new question added in this edit
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const { data: questionRow, error: questionErr } = await (supabase as any)
+                .from("teacher_lo_submission_question")
+                .insert({
+                  assessment_id: existingAssessmentId,
+                  question_type: "MCQ",
+                  question_text: question.questionText.trim(),
+                  metadata_json: {},
+                  marks: 1,
+                })
+                .select("id")
+                .single();
+
+              if (questionErr) throw questionErr;
+
+              const newOptions = question.options.map((optionText, optionIndex) => ({
+                question_id: questionRow.id,
+                option_text: optionText.trim(),
+                is_correct: question.correctOptionIndex === optionIndex,
+              }));
+
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const { error: optionErr } = await (supabase as any)
+                .from("teacher_lo_submission_question_option")
+                .insert(newOptions);
+
+              if (optionErr) throw optionErr;
+            }
+          }
+
+          // Delete DB questions that the teacher removed from the form
+          // (options have no tracking FK, so options can be hard-deleted first)
+          for (const dbQuestionId of dbQuestionIds) {
+            if (!handledDbQuestionIds.has(dbQuestionId)) {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const { error: orphanOptionDeleteErr } = await (supabase as any)
+                .from("teacher_lo_submission_question_option")
+                .delete()
+                .eq("question_id", dbQuestionId);
+
+              if (orphanOptionDeleteErr) throw orphanOptionDeleteErr;
+
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const { error: orphanQuestionDeleteErr } = await (supabase as any)
+                .from("teacher_lo_submission_question")
+                .delete()
+                .eq("id", dbQuestionId);
+
+              if (orphanQuestionDeleteErr) throw orphanQuestionDeleteErr;
+            }
+          }
+        } else {
+          // ── Create mode or edit adding quiz for the first time: INSERT all ────
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: assessmentRow, error: assessmentErr } = await (supabase as any)
+            .from("teacher_lo_submission_assessment")
             .insert({
-              assessment_id: assessmentRow.id,
-              question_type: "MCQ",
-              question_text: question.questionText.trim(),
-              metadata_json: {},
-              marks: 1,
+              submission_id: activeSubmissionId,
+              title: assessmentTitle,
+              pass_percentage: 70,
+              max_attempts: 3,
+              randomization_mode: quizPayload.randomizationMode,
+              sample_percentage: quizPayload.samplePercentage,
             })
             .select("id")
             .single();
 
-          if (questionErr) {
-            throw questionErr;
-          }
+          if (assessmentErr) throw assessmentErr;
 
-          const optionRows = question.options.map((optionText, optionIndex) => ({
-            question_id: questionRow.id,
-            option_text: optionText.trim(),
-            is_correct: question.correctOptionIndex === optionIndex,
-          }));
+          for (const question of quizPayload.questions) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { data: questionRow, error: questionErr } = await (supabase as any)
+              .from("teacher_lo_submission_question")
+              .insert({
+                assessment_id: assessmentRow.id,
+                question_type: "MCQ",
+                question_text: question.questionText.trim(),
+                metadata_json: {},
+                marks: 1,
+              })
+              .select("id")
+              .single();
 
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { error: optionErr } = await (supabase as any)
-            .from("teacher_lo_submission_question_option")
-            .insert(optionRows);
+            if (questionErr) throw questionErr;
 
-          if (optionErr) {
-            throw optionErr;
+            const optionRows = question.options.map((optionText, optionIndex) => ({
+              question_id: questionRow.id,
+              option_text: optionText.trim(),
+              is_correct: question.correctOptionIndex === optionIndex,
+            }));
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { error: optionErr } = await (supabase as any)
+              .from("teacher_lo_submission_question_option")
+              .insert(optionRows);
+
+            if (optionErr) throw optionErr;
           }
         }
       }
+      // If edit mode with no quizPayload (teacher removed the quiz block), the
+      // existing assessment is left untouched — student_quiz_attempt FK prevents
+      // hard-deleting assessments that have been attempted.
+
+      // ── Build deduplicated, validated edge payload ──────────────────────────
+      // Each directed pair (source_lo_id, target_lo_id) is stored at most once.
+      // Self-edges and empty IDs are rejected before hitting the DB.
+      const edgePairsSeen = new Set<string>();
+      const edgePayload: Array<{
+        submission_id: string;
+        source_lo_id: string;
+        target_lo_id: string;
+      }> = [];
 
       for (const prereqId of prerequisites) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { error: edgeErr } = await (supabase as any)
-          .from("teacher_lo_submission_edge")
-          .insert({
-            submission_id: activeSubmissionId,
-            source_lo_id: prereqId,
-            target_lo_id: loId,
-          });
-
-        if (edgeErr) {
-          throw edgeErr;
-        }
+        if (!prereqId || prereqId === loId) continue;
+        const key = `${prereqId}→${loId}`;
+        if (edgePairsSeen.has(key)) continue;
+        edgePairsSeen.add(key);
+        edgePayload.push({ submission_id: activeSubmissionId, source_lo_id: prereqId, target_lo_id: loId });
       }
 
       for (const postreqId of postrequisites) {
+        if (!postreqId || postreqId === loId) continue;
+        const key = `${loId}→${postreqId}`;
+        if (edgePairsSeen.has(key)) continue;
+        edgePairsSeen.add(key);
+        edgePayload.push({ submission_id: activeSubmissionId, source_lo_id: loId, target_lo_id: postreqId });
+      }
+
+      for (const edgeRow of edgePayload) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { error: edgeErr } = await (supabase as any)
           .from("teacher_lo_submission_edge")
-          .insert({
-            submission_id: activeSubmissionId,
-            source_lo_id: loId,
-            target_lo_id: postreqId,
-          });
+          .insert(edgeRow);
 
         if (edgeErr) {
+          console.error("[SubmissionForm] Edge insert failed:", edgeErr);
           throw edgeErr;
         }
       }
@@ -875,14 +1087,52 @@ export function SubmissionForm({ mode, initialData, successRedirect }: Submissio
         router.push(successRedirect as any);
       }, 1200);
     } catch (submitErr: unknown) {
-      console.error("[SubmissionForm] Failed to save submission:", submitErr);
+      // Supabase returns PostgrestError plain objects — not instanceof Error.
+      // Extract .message and .details so the actual DB error is surfaced.
+      const pgMsg =
+        submitErr !== null &&
+        typeof submitErr === "object" &&
+        "message" in (submitErr as object) &&
+        typeof (submitErr as { message?: unknown }).message === "string"
+          ? (submitErr as { message: string }).message
+          : null;
+      const pgDetails =
+        submitErr !== null &&
+        typeof submitErr === "object" &&
+        "details" in (submitErr as object) &&
+        typeof (submitErr as { details?: unknown }).details === "string"
+          ? (submitErr as { details: string }).details
+          : null;
+      const pgCode =
+        submitErr !== null &&
+        typeof submitErr === "object" &&
+        "code" in (submitErr as object)
+          ? String((submitErr as { code?: unknown }).code)
+          : null;
+
+      console.error("[SubmissionForm] Save failed (raw):", submitErr);
+      if (pgMsg || pgCode) {
+        console.error(`[SubmissionForm] DB error [${pgCode ?? "?"}]: ${pgMsg}${pgDetails ? ` — ${pgDetails}` : ""}`);
+      }
+
       const msg =
         submitErr instanceof Error
           ? submitErr.message
-          : "Something went wrong while saving the submission.";
-      setError(msg);
+          : pgMsg
+            ? pgMsg
+            : "Something went wrong while saving the submission.";
+
+      if (!isEditMode && createdSubmissionId) {
+        failedCreateSubmissionIdRef.current = createdSubmissionId;
+        setError(
+          `${msg} A submission record was already created (${createdSubmissionId}); use Edit to complete/fix it instead of creating a new one.`
+        );
+      } else {
+        setError(msg);
+      }
     } finally {
       setSubmitting(false);
+      submitLockRef.current = false;
     }
   }
 
@@ -1288,7 +1538,11 @@ export function SubmissionForm({ mode, initialData, successRedirect }: Submissio
                 {(item.deliveryTypeCode === "FLOWCHART" || item.deliveryTypeCode === "VISUAL_EXPLANATION") && (
                   <>
                     <div>
-                      <label className={labelCls}>Image URL</label>
+                      <label className={labelCls}>
+                        {item.deliveryTypeCode === "VISUAL_EXPLANATION"
+                          ? "Image or video URL"
+                          : "Image URL"}
+                      </label>
                       <Input
                         type="url"
                         placeholder="https://..."
@@ -1296,6 +1550,11 @@ export function SubmissionForm({ mode, initialData, successRedirect }: Submissio
                         onChange={(e) => updateContentItem(index, "imageUrl", e.target.value)}
                         className="border-slate-700 bg-slate-800"
                       />
+                      {item.deliveryTypeCode === "VISUAL_EXPLANATION" && (
+                        <p className="mt-1 text-xs text-slate-500">
+                          Supports images, YouTube links, and direct video files (.mp4, .webm, .ogg).
+                        </p>
+                      )}
                     </div>
                     <div>
                       <label className={labelCls}>Caption (optional)</label>

@@ -4,6 +4,7 @@ import ReactFlow, { Background, Controls, MiniMap, Position } from "reactflow";
 import "reactflow/dist/style.css";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import type { Route } from "next";
 import type { NodeMouseHandler, ReactFlowInstance } from "reactflow";
 
 export type RoadmapNode = {
@@ -25,6 +26,7 @@ interface Props {
   edges: RoadmapEdge[];
   mostTakenPathNodeIds?: string[];
   currentNodeId?: string;
+  courseSlug?: string;
 }
 
 const statusColorMap: Record<RoadmapNode["status"], string> = {
@@ -45,7 +47,7 @@ const COLUMN_X = {
 const TOP_PADDING = 80;
 const VERTICAL_GAP = 140;
 
-export function RoadmapTree({ nodes, edges, mostTakenPathNodeIds = [], currentNodeId }: Props) {
+export function RoadmapTree({ nodes, edges, mostTakenPathNodeIds = [], currentNodeId, courseSlug }: Props) {
   const router = useRouter();
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
 
@@ -126,7 +128,7 @@ export function RoadmapTree({ nodes, edges, mostTakenPathNodeIds = [], currentNo
             fontWeight: isCurrent ? "700" : "500",
             minWidth: "180px",
             textAlign: "center" as const,
-            cursor: node.slug ? "pointer" : "default"
+            cursor: courseSlug ? "pointer" : "default"
           }
         };
       }),
@@ -160,11 +162,9 @@ export function RoadmapTree({ nodes, edges, mostTakenPathNodeIds = [], currentNo
   }, [flowEdges, flowNodes, rfInstance]);
 
   const handleNodeClick = useCallback<NodeMouseHandler>((_, node) => {
-    const slug = (node.data as { slug?: string } | undefined)?.slug;
-    if (slug) {
-      router.push(`/courses/dsa/${slug}`);
-    }
-  }, [router]);
+    if (!courseSlug) return;
+    router.push(`/courses/${courseSlug}?lo=${node.id}` as Route);
+  }, [courseSlug, router]);
 
   return (
     <div className="space-y-3">

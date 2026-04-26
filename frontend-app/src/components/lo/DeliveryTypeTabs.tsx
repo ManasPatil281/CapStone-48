@@ -961,8 +961,8 @@ function ContentRenderer({
     case "visualExplanation": {
       const data = content.content_json as VisualExplanationContent;
       return (
-        <MediaPanel
-          imageUrl={data.image_url}
+        <VisualMediaPanel
+          mediaUrl={data.image_url}
           title={content.title}
           caption={data.caption}
           body={data.text}
@@ -1143,4 +1143,191 @@ function MediaPanel({
       )}
     </div>
   );
+}
+
+function VisualMediaPanel({
+  mediaUrl,
+  title,
+  caption,
+  body,
+}: {
+  mediaUrl?: string;
+  title?: string;
+  caption?: string;
+  body?: string;
+}) {
+  const trimmedUrl = mediaUrl?.trim() ?? "";
+
+  if (!trimmedUrl) {
+    return <p className="text-sm text-slate-500">No visual media available yet.</p>;
+  }
+
+  const youtubeEmbedUrl = getYouTubeEmbedUrl(trimmedUrl);
+
+  if (youtubeEmbedUrl) {
+    return (
+      <div className="space-y-4">
+        <div className="overflow-hidden rounded-xl border border-slate-800/60 bg-slate-950/60">
+          <iframe
+            src={youtubeEmbedUrl}
+            title={title || "Visual explanation video"}
+            className="aspect-video w-full"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            referrerPolicy="strict-origin-when-cross-origin"
+            allowFullScreen
+          />
+        </div>
+        <VisualMediaText caption={caption} body={body} />
+      </div>
+    );
+  }
+
+  if (isDirectVideoUrl(trimmedUrl)) {
+    return (
+      <div className="space-y-4">
+        <video
+          src={trimmedUrl}
+          controls
+          preload="metadata"
+          className="aspect-video w-full rounded-xl border border-slate-800/60 bg-slate-950/60"
+        >
+          Your browser does not support the video tag.
+        </video>
+        <VisualMediaText caption={caption} body={body} />
+      </div>
+    );
+  }
+
+  if (isLikelyImageUrl(trimmedUrl)) {
+    return (
+      <MediaPanel
+        imageUrl={trimmedUrl}
+        title={title}
+        caption={caption}
+        body={body}
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-4 rounded-xl border border-slate-800/60 bg-slate-950/40 p-4">
+      <p className="text-sm text-slate-300">
+        Unsupported media preview format. Open link:
+      </p>
+      <a
+        href={trimmedUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="break-all text-sm text-brand hover:text-brand/80"
+      >
+        {trimmedUrl}
+      </a>
+      <VisualMediaText caption={caption} body={body} />
+    </div>
+  );
+}
+
+function VisualMediaText({ caption, body }: { caption?: string; body?: string }) {
+  return (
+    <>
+      {caption && (
+        <p className="text-sm leading-relaxed text-slate-400">{caption}</p>
+      )}
+      {body && (
+        <p className="text-sm leading-relaxed text-slate-300 whitespace-pre-wrap">{body}</p>
+      )}
+    </>
+  );
+}
+
+function parseUrl(url: string): URL | null {
+  try {
+    return new URL(url);
+  } catch {
+    return null;
+  }
+}
+
+function isLikelyImageUrl(url: string): boolean {
+  const lowered = url.toLowerCase();
+
+  if (lowered.startsWith("data:image/")) {
+    return true;
+  }
+
+  const parsed = parseUrl(url);
+
+  if (!parsed) {
+    return false;
+  }
+
+  const pathname = parsed.pathname.toLowerCase();
+
+  if (/\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(pathname)) {
+    return true;
+  }
+
+  const imageHosts = [
+    "unsplash.com",
+    "images.unsplash.com",
+    "imgur.com",
+    "i.imgur.com",
+    "res.cloudinary.com",
+    "googleusercontent.com",
+    "gstatic.com",
+  ];
+
+  if (imageHosts.some((host) => parsed.hostname.includes(host))) {
+    return true;
+  }
+
+  const query = parsed.search.toLowerCase();
+  if (/format=(png|jpe?g|webp|gif|avif|svg)/.test(query)) {
+    return true;
+  }
+
+  return false;
+}
+
+function isDirectVideoUrl(url: string): boolean {
+  const lowered = url.toLowerCase();
+
+  if (lowered.startsWith("data:video/")) {
+    return true;
+  }
+
+  const parsed = parseUrl(url);
+
+  if (!parsed) {
+    return false;
+  }
+
+  return /\.(mp4|webm|ogg)$/i.test(parsed.pathname.toLowerCase());
+}
+
+function getYouTubeEmbedUrl(url: string): string | null {
+  const parsed = parseUrl(url);
+
+  if (!parsed) {
+    return null;
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  let videoId: string | null = null;
+
+  if (host.includes("youtube.com")) {
+    videoId = parsed.searchParams.get("v");
+
+    if (!videoId && parsed.pathname.startsWith("/shorts/")) {
+      videoId = parsed.pathname.split("/")[2] ?? null;
+    }
+  } else if (host.includes("youtu.be")) {
+    videoId = parsed.pathname.slice(1).split("/")[0] || null;
+  }
+
+  if (!videoId) {
+    return null;
+  }
+
+  return `https://www.youtube.com/embed/${videoId}`;
 }

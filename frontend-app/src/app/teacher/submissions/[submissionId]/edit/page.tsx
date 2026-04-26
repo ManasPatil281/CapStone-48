@@ -55,6 +55,7 @@ function mapContentRowToContentItem(row: any): ContentItem {
     .filter((item) => item.front || item.back);
 
   return {
+    existingId: row.id as string,
     deliveryTypeId: row.delivery_type_id,
     deliveryTypeCode: code,
     title: row.title ?? "",
@@ -281,6 +282,7 @@ export default async function EditSubmissionPage({ params }: EditPageProps) {
       const correctOptionIndex = question.options.findIndex((option) => option.is_correct);
 
       return {
+        existingId: question.id,
         questionText: question.question_text,
         options: [
           optionTexts[0] ?? "",
@@ -293,6 +295,7 @@ export default async function EditSubmissionPage({ params }: EditPageProps) {
     });
 
     contentItems.push({
+      existingId: assessmentConfig?.id ?? undefined,
       deliveryTypeId: quizDeliveryTypeRes.data?.id ?? "",
       deliveryTypeCode: "QUIZ",
       title: "Quiz",

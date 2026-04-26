@@ -25,6 +25,8 @@ type MySubmissionsClientProps = {
   initialSubmissions: SubmissionCard[];
 };
 
+const SOFT_DELETE_NOTE_PREFIX = "[SOFT_DELETED]";
+
 export function MySubmissionsClient({ teacherId, initialSubmissions }: MySubmissionsClientProps) {
   const [submissions, setSubmissions] = useState<SubmissionCard[]>(initialSubmissions);
   const [error, setError] = useState<string | null>(null);
@@ -86,81 +88,6 @@ export function MySubmissionsClient({ teacherId, initialSubmissions }: MySubmiss
         throw new Error("Submission not found or you do not have permission to delete it.");
       }
 
-      const { data: assessmentRows, error: assessmentErr } = await supabase
-        .from("teacher_lo_submission_assessment")
-        .select("id")
-        .eq("submission_id", activeDelete.id);
-
-      if (assessmentErr) {
-        throw assessmentErr;
-      }
-
-      const assessmentIds = (assessmentRows ?? []).map((row: { id: string }) => row.id);
-
-      let questionIds: string[] = [];
-
-      if (assessmentIds.length > 0) {
-        const { data: questionRows, error: questionErr } = await supabase
-          .from("teacher_lo_submission_question")
-          .select("id")
-          .in("assessment_id", assessmentIds);
-
-        if (questionErr) {
-          throw questionErr;
-        }
-
-        questionIds = (questionRows ?? []).map((row: { id: string }) => row.id);
-      }
-
-      if (questionIds.length > 0) {
-        const { error: optionDeleteErr } = await supabase
-          .from("teacher_lo_submission_question_option")
-          .delete()
-          .in("question_id", questionIds);
-
-        if (optionDeleteErr) {
-          throw optionDeleteErr;
-        }
-      }
-
-      if (assessmentIds.length > 0) {
-        const { error: questionDeleteErr } = await supabase
-          .from("teacher_lo_submission_question")
-          .delete()
-          .in("assessment_id", assessmentIds);
-
-        if (questionDeleteErr) {
-          throw questionDeleteErr;
-        }
-      }
-
-      const { error: assessmentDeleteErr } = await supabase
-        .from("teacher_lo_submission_assessment")
-        .delete()
-        .eq("submission_id", activeDelete.id);
-
-      if (assessmentDeleteErr) {
-        throw assessmentDeleteErr;
-      }
-
-      const { error: contentDeleteErr } = await supabase
-        .from("teacher_lo_submission_content")
-        .delete()
-        .eq("submission_id", activeDelete.id);
-
-      if (contentDeleteErr) {
-        throw contentDeleteErr;
-      }
-
-      const { error: edgeDeleteErr } = await supabase
-        .from("teacher_lo_submission_edge")
-        .delete()
-        .eq("submission_id", activeDelete.id);
-
-      if (edgeDeleteErr) {
-        throw edgeDeleteErr;
-      }
-
       const { error: submissionDeleteErr } = await supabase
         .from("teacher_lo_submission")
         .delete()
@@ -168,22 +95,75 @@ export function MySubmissionsClient({ teacherId, initialSubmissions }: MySubmiss
         .eq("teacher_id", teacherId);
 
       if (submissionDeleteErr) {
-        throw submissionDeleteErr;
+        const pgCode = String((submissionDeleteErr as { code?: unknown }).code ?? "");
+
+        // FK conflicts mean tracking history references this submission.
+        // Use a soft delete status transition instead of deleting linked rows.
+        if (pgCode === "23503") {
+          const existingNotes = (activeDelete.notes ?? "").trim();
+          const softDeletedNotes = `${SOFT_DELETE_NOTE_PREFIX} ${new Date().toISOString()}${
+            existingNotes ? ` | ${existingNotes}` : ""
+          }`;
+
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { error: softDeleteErr } = await (supabase as any)
+            .from("teacher_lo_submission")
+            .update({ status: "rejected", notes: softDeletedNotes })
+            .eq("id", activeDelete.id)
+            .eq("teacher_id", teacherId);
+
+          if (softDeleteErr) {
+            throw softDeleteErr;
+          }
+        } else {
+          throw submissionDeleteErr;
+        }
       }
 
       setSubmissions((prev) => prev.filter((item) => item.id !== activeDelete.id));
       setDeleteConfirmationText("");
       setActiveDelete(null);
     } catch (deleteErr: unknown) {
+      const pgMsg =
+        deleteErr !== null &&
+        typeof deleteErr === "object" &&
+        "message" in (deleteErr as object) &&
+        typeof (deleteErr as { message?: unknown }).message === "string"
+          ? (deleteErr as { message: string }).message
+          : null;
+      const pgCode =
+        deleteErr !== null &&
+        typeof deleteErr === "object" &&
+        "code" in (deleteErr as object)
+          ? String((deleteErr as { code?: unknown }).code)
+          : null;
+      const pgDetails =
+        deleteErr !== null &&
+        typeof deleteErr === "object" &&
+        "details" in (deleteErr as object) &&
+        typeof (deleteErr as { details?: unknown }).details === "string"
+          ? (deleteErr as { details: string }).details
+          : null;
+
       console.error("[MySubmissionsClient] Failed to delete submission:", {
         error: deleteErr,
         submissionId: activeDelete.id,
         teacherId,
       });
+
+      if (pgMsg || pgCode) {
+        console.error(
+          `[MySubmissionsClient] Delete DB error [${pgCode ?? "?"}]: ${pgMsg}${
+            pgDetails ? ` — ${pgDetails}` : ""
+          }`
+        );
+      }
+
       const msg =
-        deleteErr instanceof Error
+        pgMsg ??
+        (deleteErr instanceof Error
           ? deleteErr.message
-          : "Failed to delete submission. Please try again.";
+          : "Failed to delete submission. Please try again.");
       setError(msg);
     } finally {
       setDeleteLoading(false);
@@ -290,8 +270,8 @@ export function MySubmissionsClient({ teacherId, initialSubmissions }: MySubmiss
           <div className="w-full max-w-lg rounded-xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
             <h2 className="text-lg font-semibold text-slate-100">Delete submission</h2>
             <p className="mt-2 text-sm text-slate-400">
-              This will permanently delete this submission, its content blocks, quiz, and roadmap
-              edges for this submission only.
+              This removes the submission from your list. If tracking history references it,
+              the app will safely archive it instead of hard deleting linked data.
             </p>
             <p className="mt-2 text-sm text-slate-400">
               This will not delete the master learning object or the course mapping.

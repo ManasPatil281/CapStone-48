@@ -24,6 +24,7 @@ interface Props {
     nodes: RoadmapNode[];
     edges: RoadmapEdge[];
     mostTakenPathNodeIds?: string[];
+    nodeVisitCounts?: Record<string, number>;
   };
   assessment?: Assessment & { questions: any[] };
   attempts?: AssessmentAttempt[];
@@ -102,6 +103,7 @@ export function LODetailTabs({
             edges={roadmap.edges}
             currentNodeId={roadmap.currentNodeId}
             mostTakenPathNodeIds={courseRoadmap?.mostTakenPathNodeIds}
+            courseSlug={courseSlug}
           />
         </div>
       </TabsContent>
@@ -114,6 +116,7 @@ export function LODetailTabs({
               nodes={courseRoadmap.nodes}
               edges={courseRoadmap.edges}
               mostTakenPathNodeIds={courseRoadmap.mostTakenPathNodeIds}
+              nodeVisitCounts={courseRoadmap.nodeVisitCounts}
             />
           </div>
         </TabsContent>

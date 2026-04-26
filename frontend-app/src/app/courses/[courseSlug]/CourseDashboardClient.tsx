@@ -1,18 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import type { Route } from "next";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CourseRoadmap } from "@/components/lo/CourseRoadmap";
 import type { RoadmapEdge, RoadmapNode } from "@/components/lo/RoadmapTree";
-import { ArrowLeft, ArrowRight, BookOpen, GitBranch, Search, User } from "lucide-react";
+import { ArrowLeft, ArrowRight, BookOpen, GitBranch, Search, User, X } from "lucide-react";
 
 interface SubmissionTile {
   submissionId: string;
   submissionTitle: string;
   loTitle: string;
+  learningObjectId: string;
   teacherName: string;
   notes: string;
 }
@@ -24,6 +26,8 @@ interface CourseDashboardClientProps {
   roadmap: {
     nodes: RoadmapNode[];
     edges: RoadmapEdge[];
+    mostTakenPathNodeIds?: string[];
+    nodeVisitCounts?: Record<string, number>;
   };
 }
 
@@ -98,22 +102,48 @@ export function CourseDashboardClient({
   submissions,
   roadmap
 }: CourseDashboardClientProps) {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const loParam = searchParams.get("lo");
+
   const [searchQuery, setSearchQuery] = useState("");
+  const [activeTab, setActiveTab] = useState("all-los");
+
+  // When a node is clicked from the roadmap tab, switch to the LO list tab
+  useEffect(() => {
+    if (loParam) {
+      setActiveTab("all-los");
+    }
+  }, [loParam]);
+
+  const loFilterTitle = useMemo(() => {
+    if (!loParam) return null;
+    return submissions.find((s) => s.learningObjectId === loParam)?.loTitle ?? loParam;
+  }, [loParam, submissions]);
+
+  const loFilteredSubmissions = useMemo(() => {
+    if (!loParam) return submissions;
+    return submissions.filter((s) => s.learningObjectId === loParam);
+  }, [submissions, loParam]);
 
   const filteredSubmissions = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
-
-    if (!query) {
-      return submissions;
-    }
-
-    return submissions.filter((entry) => {
-      const submissionMatch = entry.submissionTitle.toLowerCase().includes(query);
-      const loMatch = entry.loTitle.toLowerCase().includes(query);
-      const teacherMatch = entry.teacherName.toLowerCase().includes(query);
-      return submissionMatch || loMatch || teacherMatch;
+    if (!query) return loFilteredSubmissions;
+    return loFilteredSubmissions.filter((entry) => {
+      return (
+        entry.submissionTitle.toLowerCase().includes(query) ||
+        entry.loTitle.toLowerCase().includes(query) ||
+        entry.teacherName.toLowerCase().includes(query)
+      );
     });
-  }, [submissions, searchQuery]);
+  }, [loFilteredSubmissions, searchQuery]);
+
+  function clearLoFilter() {
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("lo");
+    const qs = params.toString();
+    router.push((`/courses/${courseSlug}` + (qs ? `?${qs}` : "")) as Route);
+  }
 
   return (
     <main className="min-h-screen bg-slate-950 px-6 py-10">
@@ -145,7 +175,7 @@ export function CourseDashboardClient({
         <div className="h-px w-full bg-slate-800/60" />
 
         {/* ── Tabs ── */}
-        <Tabs defaultValue="all-los" className="w-full">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList>
             <TabsTrigger value="all-los">
               <BookOpen className="h-3.5 w-3.5" />
@@ -160,6 +190,24 @@ export function CourseDashboardClient({
 
           {/* ── All LOs tab ── */}
           <TabsContent value="all-los" className="space-y-5">
+
+            {/* Active filter banner */}
+            {loParam && (
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-brand/30 bg-brand/10 px-4 py-2.5">
+                <p className="text-sm font-medium text-slate-200">
+                  Showing submissions for:{" "}
+                  <span className="font-semibold text-brand">{loFilterTitle}</span>
+                </p>
+                <button
+                  onClick={clearLoFilter}
+                  className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:border-slate-600 hover:text-slate-100"
+                >
+                  <X className="h-3 w-3" />
+                  Show all
+                </button>
+              </div>
+            )}
+
             <div className="relative">
               <Search className="absolute left-3.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-600" />
               <Input
@@ -173,8 +221,8 @@ export function CourseDashboardClient({
 
             {filteredSubmissions.length === 0 ? (
               <EmptyState
-                message="No approved submissions found"
-                sub="Try a different search term or check back later."
+                message={loParam ? "No submissions for this learning object" : "No approved submissions found"}
+                sub={loParam ? "Try another learning object or clear the filter." : "Try a different search term or check back later."}
               />
             ) : (
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -207,6 +255,8 @@ export function CourseDashboardClient({
                 courseSlug={courseSlug}
                 nodes={roadmap.nodes}
                 edges={roadmap.edges}
+                mostTakenPathNodeIds={roadmap.mostTakenPathNodeIds}
+                nodeVisitCounts={roadmap.nodeVisitCounts}
               />
             </div>
           </TabsContent>

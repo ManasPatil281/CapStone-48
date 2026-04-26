@@ -6,9 +6,10 @@ import { LODetailTabs } from "@/components/lo/LODetailTabs";
 import type { ContentTabData, LearningObject, LearningObjectContent, LearningObjectDetail } from "@/types/learning";
 import type { RoadmapEdge, RoadmapNode } from "@/components/lo/RoadmapTree";
 import { buildSubmissionChatContext } from "@/lib/ai/context";
-import { ArrowLeft, User } from "lucide-react";
+import { ArrowLeft, ArrowRight, User } from "lucide-react";
 import type { SubmissionStats, StatContentBlock } from "@/components/lo/StatisticsTab";
 import { calculateMasteryScore } from "@/lib/mastery/calculateMasteryScore";
+import { computePopularPath } from "@/lib/popularity/computePopularPath";
 
 interface PageProps {
   params: {
@@ -104,28 +105,59 @@ export default async function SubmissionDetailPage({ params }: PageProps) {
 
   const lo = submission.learning_object;
 
+  // Module roadmap edges are submission-scoped: only edges stored against THIS
+  // submission are shown in the module roadmap.  The course roadmap (separate
+  // query further down) aggregates globally across all approved submissions.
   const [prerequisiteEdgesRes, dependentEdgesRes, submissionAssessmentRes] = await Promise.all([
     supabase
       .from("teacher_lo_submission_edge")
-      .select("source_lo_id, teacher_lo_submission!inner(status)")
-      .eq("target_lo_id", lo.id)
-      .eq("teacher_lo_submission.status", "approved"),
+      .select("source_lo_id")
+      .eq("submission_id", submission.id)
+      .eq("target_lo_id", lo.id),
     supabase
       .from("teacher_lo_submission_edge")
-      .select("target_lo_id, teacher_lo_submission!inner(status)")
-      .eq("source_lo_id", lo.id)
-      .eq("teacher_lo_submission.status", "approved"),
-    supabase.from("teacher_lo_submission_assessment").select("*").eq("submission_id", submission.id).maybeSingle()
+      .select("target_lo_id")
+      .eq("submission_id", submission.id)
+      .eq("source_lo_id", lo.id),
+    supabase
+      .from("teacher_lo_submission_assessment")
+      .select("id, title, pass_percentage, max_attempts, randomization_mode, sample_percentage, created_at")
+      .eq("submission_id", submission.id)
+      .order("created_at", { ascending: false })
   ]);
+
+  if (prerequisiteEdgesRes.error) {
+    console.error("[SubmissionDetailPage] Failed to fetch prerequisite edges:", prerequisiteEdgesRes.error);
+  }
+  if (dependentEdgesRes.error) {
+    console.error("[SubmissionDetailPage] Failed to fetch dependent edges:", dependentEdgesRes.error);
+  }
 
   if (submissionAssessmentRes.error) {
     console.error("[SubmissionDetailPage] Failed to fetch submission assessment:", submissionAssessmentRes.error);
   }
 
+  const submissionAssessmentRows = (submissionAssessmentRes.data ?? []) as Array<{
+    id: string;
+    title: string;
+    pass_percentage: number;
+    max_attempts: number;
+    randomization_mode?: number | null;
+    sample_percentage?: number | null;
+    created_at?: string | null;
+  }>;
+
+  if (submissionAssessmentRows.length > 1) {
+    console.error("[SubmissionDetailPage] Duplicate assessments found for submission:", {
+      submissionId: submission.id,
+      assessmentIds: submissionAssessmentRows.map((row) => row.id),
+    });
+  }
+
   let submissionAssessment: (LearningObjectDetail["assessment"] & { questions: any[] }) | undefined;
 
-  if (submissionAssessmentRes.data) {
-    const assessmentRow = submissionAssessmentRes.data as { id: string; title: string; pass_percentage: number; max_attempts: number };
+  if (submissionAssessmentRows.length > 0) {
+    const assessmentRow = submissionAssessmentRows[0];
     const { data: questionRows, error: questionError } = await supabase
       .from("teacher_lo_submission_question")
       .select("*")
@@ -226,7 +258,7 @@ export default async function SubmissionDetailPage({ params }: PageProps) {
 
   const courseLoIds = (courseMembershipRows ?? []).map((row: any) => row.learning_object_id as string).filter(Boolean);
 
-  let courseRoadmapData: { nodes: RoadmapNode[]; edges: RoadmapEdge[]; mostTakenPathNodeIds?: string[] } | undefined;
+  let courseRoadmapData: { nodes: RoadmapNode[]; edges: RoadmapEdge[]; mostTakenPathNodeIds?: string[]; nodeVisitCounts?: Record<string, number> } | undefined;
 
   if (courseLoIds.length > 0) {
     const [courseLearningObjectsRes, approvedEdgesRes] = await Promise.all([
@@ -265,7 +297,20 @@ export default async function SubmissionDetailPage({ params }: PageProps) {
     });
 
     const edges: RoadmapEdge[] = Array.from(edgeMap.values());
-    courseRoadmapData = { nodes, edges };
+
+    const { data: visitRows } = await (supabase as any)
+      .from("student_submission_visit")
+      .select("student_id, learning_object_id, started_at")
+      .in("learning_object_id", courseLoIds);
+
+    const popularity = computePopularPath(visitRows ?? [], courseLoIds, edges);
+
+    courseRoadmapData = {
+      nodes,
+      edges,
+      mostTakenPathNodeIds: popularity.popularNodeIds,
+      nodeVisitCounts: popularity.nodeVisitCounts,
+    };
   }
 
   // ── Statistics data (STUDENT only) ────────────────────────────────────────
@@ -431,6 +476,55 @@ export default async function SubmissionDetailPage({ params }: PageProps) {
           }}
           submissionStats={submissionStats}
         />
+
+        {/* ── Prereq / Postreq navigation ── */}
+        <div className="grid grid-cols-1 gap-4 border-t border-slate-800/60 pt-6 sm:grid-cols-2">
+          {/* Prerequisites */}
+          <div className="space-y-3">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">
+              Prerequisites
+            </p>
+            {loDetail.prerequisites.length === 0 ? (
+              <p className="text-xs text-slate-600">No prerequisites</p>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {loDetail.prerequisites.map((pr) => (
+                  <Link
+                    key={pr.id}
+                    href={`/courses/${params.courseSlug}?lo=${pr.id}`}
+                    className="flex items-center gap-3 rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2.5 text-sm text-slate-300 transition-colors hover:border-slate-700 hover:bg-slate-900 hover:text-slate-100"
+                  >
+                    <ArrowLeft className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+                    <span className="truncate">{pr.title}</span>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Next modules */}
+          <div className="space-y-3">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">
+              Next Modules
+            </p>
+            {loDetail.dependents.length === 0 ? (
+              <p className="text-xs text-slate-600">No next modules</p>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {loDetail.dependents.map((dep) => (
+                  <Link
+                    key={dep.id}
+                    href={`/courses/${params.courseSlug}?lo=${dep.id}`}
+                    className="flex items-center gap-3 rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2.5 text-sm text-slate-300 transition-colors hover:border-slate-700 hover:bg-slate-900 hover:text-slate-100"
+                  >
+                    <span className="truncate">{dep.title}</span>
+                    <ArrowRight className="ml-auto h-3.5 w-3.5 shrink-0 text-slate-500" />
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </main>
   );
