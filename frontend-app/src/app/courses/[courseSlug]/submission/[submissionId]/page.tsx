@@ -7,6 +7,8 @@ import type { ContentTabData, LearningObject, LearningObjectContent, LearningObj
 import type { RoadmapEdge, RoadmapNode } from "@/components/lo/RoadmapTree";
 import { buildSubmissionChatContext } from "@/lib/ai/context";
 import { ArrowLeft, User } from "lucide-react";
+import type { SubmissionStats, StatContentBlock } from "@/components/lo/StatisticsTab";
+import { calculateMasteryScore } from "@/lib/mastery/calculateMasteryScore";
 
 interface PageProps {
   params: {
@@ -266,6 +268,120 @@ export default async function SubmissionDetailPage({ params }: PageProps) {
     courseRoadmapData = { nodes, edges };
   }
 
+  // ── Statistics data (STUDENT only) ────────────────────────────────────────
+  // Fetched server-side so the tab renders immediately without a client query.
+  // Scoped strictly to this student + this submission.
+  let submissionStats: SubmissionStats | null = null;
+
+  if (userId && viewerProfile?.role === "STUDENT") {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const supabaseAny = supabase as any;
+
+    const [visitRes, blockTimeRes, quizRes] = await Promise.all([
+      supabaseAny
+        .from("student_submission_visit")
+        .select("active_seconds, idle_seconds")
+        .eq("student_id", userId)
+        .eq("submission_id", submission.id),
+      supabaseAny
+        .from("student_content_block_time")
+        .select("content_id, active_seconds, idle_seconds")
+        .eq("student_id", userId)
+        .eq("submission_id", submission.id),
+      supabaseAny
+        .from("student_quiz_attempt")
+        .select("id, score_percentage, correct_count, total_questions, submitted_at, created_at, randomization_mode, sample_percentage")
+        .eq("student_id", userId)
+        .eq("submission_id", submission.id)
+        .order("submitted_at", { ascending: false, nullsFirst: false })
+        .order("created_at", { ascending: false, nullsFirst: false }),
+    ]);
+
+    const visitRows = (visitRes.data ?? []) as Array<{
+      active_seconds: number | null;
+      idle_seconds: number | null;
+    }>;
+    const totalActiveSeconds = visitRows.reduce((sum, r) => sum + Number(r.active_seconds ?? 0), 0);
+    const totalIdleSeconds = visitRows.reduce((sum, r) => sum + Number(r.idle_seconds ?? 0), 0);
+
+    const blockTimeRows = (blockTimeRes.data ?? []) as Array<{
+      content_id: string;
+      active_seconds: number | null;
+      idle_seconds: number | null;
+    }>;
+
+    const quizRows = (quizRes.data ?? []) as Array<{
+      id: string;
+      score_percentage: number | null;
+      correct_count: number | null;
+      total_questions: number | null;
+      submitted_at: string | null;
+      created_at: string | null;
+      randomization_mode: number | null;
+      sample_percentage: number | null;
+    }>;
+
+    // Build content block list from the raw rows (which include recommended_time_seconds
+    // via the "*" selector even though it's excluded from the typed contents mapping).
+    const statContentBlocks: StatContentBlock[] = (submissionContentRows ?? []).map((item: any) => ({
+      id: item.id,
+      title: item.title ?? "Untitled block",
+      deliveryTypeCode: item.delivery_type?.code ?? null,
+      deliveryTypeName: item.delivery_type?.name ?? null,
+      recommendedTimeSeconds:
+        typeof item.recommended_time_seconds === "number" ? item.recommended_time_seconds : null,
+    }));
+
+    const contentBlockTimes = blockTimeRows.map((r) => ({
+      contentId: r.content_id,
+      activeSeconds: Number(r.active_seconds ?? 0),
+      idleSeconds: Number(r.idle_seconds ?? 0),
+    }));
+
+    const quizAttempts = quizRows.map((r) => ({
+      id: r.id,
+      scorePercentage: r.score_percentage,
+      correctCount: r.correct_count,
+      totalQuestions: r.total_questions,
+      timestamp: r.submitted_at ?? r.created_at,
+      randomizationMode: r.randomization_mode,
+      samplePercentage: r.sample_percentage,
+    }));
+
+    const masteryResult = calculateMasteryScore({
+      contentBlocks: statContentBlocks,
+      contentBlockTimes,
+      quizAttempts,
+    });
+
+    try {
+      await supabaseAny
+        .from("student_submission_mastery")
+        .upsert(
+          {
+            student_id: userId,
+            submission_id: submission.id,
+            mastery_score: masteryResult.score,
+            mastery_level: masteryResult.level,
+            last_calculated_at: new Date().toISOString(),
+            metadata_json: masteryResult.metadata,
+          },
+          { onConflict: "student_id,submission_id" }
+        );
+    } catch (masteryErr) {
+      console.error("[SubmissionDetailPage] Failed to upsert mastery:", masteryErr);
+    }
+
+    submissionStats = {
+      totalActiveSeconds,
+      totalIdleSeconds,
+      contentBlocks: statContentBlocks,
+      contentBlockTimes,
+      quizAttempts,
+      masteryResult,
+    };
+  }
+
   return (
     <main className="min-h-screen bg-slate-950 px-6 py-8">
       <div className="mx-auto max-w-5xl space-y-8">
@@ -313,6 +429,7 @@ export default async function SubmissionDetailPage({ params }: PageProps) {
             learningObjectId: loDetail.id,
             teacherId: submission.teacher_id,
           }}
+          submissionStats={submissionStats}
         />
       </div>
     </main>
