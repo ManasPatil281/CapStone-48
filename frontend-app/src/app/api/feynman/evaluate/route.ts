@@ -6,6 +6,19 @@ const GROQ_MODEL = "llama-3.1-8b-instant";
 
 type MasteryLevel = "Beginner" | "Developing" | "Proficient" | "Mastered";
 
+type GraderOutput = {
+  score: number;
+  feedback: string;
+  strengths: string[];
+  gaps: string[];
+};
+
+type CriticOutput = {
+  adjustedScore: number;
+  critique: string;
+  confidence: number;
+};
+
 function toLevel(score: number): MasteryLevel {
   if (score >= 85) return "Mastered";
   if (score >= 70) return "Proficient";
@@ -34,15 +47,8 @@ export async function POST(request: Request) {
       .eq("id", user.id)
       .maybeSingle();
 
-    
     const role = String(profile?.role ?? "").toUpperCase();
     if (role !== "STUDENT") {
-      if (process.env.NODE_ENV === "development") {
-        console.log("[api/feynman/evaluate] Forbidden role:", {
-          rawRole: profile?.role,
-          normalizedRole: role,
-        });
-      }
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -83,72 +89,64 @@ export async function POST(request: Request) {
       );
     }
 
-    const systemPrompt = `You are an educational assessment AI. A student has explained a concept using the Feynman technique. Evaluate their explanation on:
-1. Conceptual correctness — Are the core ideas accurate?
-2. Simplicity — Is it clear enough for a beginner?
-3. Completeness — Are the key points covered?
-
-Respond ONLY with valid JSON and no other text:
-{"score": <integer 0-100>, "feedback": "<2-3 sentences of constructive feedback>"}`;
-
     const userMessage = `Topic: "${loTitle}"\n\nStudent explanation:\n${explanation}`;
 
-    const groqResponse = await fetch(GROQ_API_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: GROQ_MODEL,
-        temperature: 0.3,
-        max_tokens: 300,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userMessage },
-        ],
-      }),
+    const graderRaw = await callGroq({
+      apiKey,
+      systemPrompt: `You are Grader Agent.
+Evaluate student explanation quality on correctness, simplicity, and completeness.
+Return ONLY valid JSON:
+{"score":<integer 0-100>, "feedback":"<2-3 sentences>", "strengths":["..."], "gaps":["..."]}`,
+      userMessage,
+      maxTokens: 320
     });
 
-    const groqData = await groqResponse.json();
-
-    if (!groqResponse.ok) {
-      const providerMessage =
-        groqData?.error?.message || "Groq request failed.";
-      return NextResponse.json({ error: providerMessage }, { status: 502 });
-    }
-
-    const rawReply = groqData?.choices?.[0]?.message?.content;
-    if (typeof rawReply !== "string" || !rawReply.trim()) {
+    const grader = parseGraderOutput(graderRaw);
+    if (!grader) {
       return NextResponse.json(
-        { error: "AI returned an empty response." },
+        { error: "AI grader returned an invalid response format. Please try again." },
         { status: 502 }
       );
     }
 
-    let feynmanScore: number;
-    let feynmanFeedback: string;
+    const criticRaw = await callGroq({
+      apiKey,
+      systemPrompt: `You are Critic Agent reviewing a grader's output.
+Assess whether score is too strict or too lenient based on the student's explanation.
+Return ONLY valid JSON:
+{"adjustedScore":<integer 0-100>, "critique":"<1-2 sentences>", "confidence":<number 0-1>}`,
+      userMessage: `${userMessage}\n\nGrader output:\n${JSON.stringify(grader)}`,
+      maxTokens: 220
+    });
 
-    try {
-      const jsonMatch = rawReply.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error("No JSON found");
-      const parsed = JSON.parse(jsonMatch[0]);
-
-      const rawScore = parsed.score;
-      if (typeof rawScore !== "number" || !Number.isFinite(rawScore)) {
-        throw new Error("Invalid score");
-      }
-      feynmanScore = Math.round(Math.max(0, Math.min(100, rawScore)));
-
-      feynmanFeedback =
-        typeof parsed.feedback === "string" ? parsed.feedback.trim() : "";
-      if (!feynmanFeedback) throw new Error("Missing feedback");
-    } catch {
+    const critic = parseCriticOutput(criticRaw);
+    if (!critic) {
       return NextResponse.json(
-        { error: "AI returned an invalid response format. Please try again." },
+        { error: "AI critic returned an invalid response format. Please try again." },
         { status: 502 }
       );
     }
+
+    const refereeRaw = await callGroq({
+      apiKey,
+      systemPrompt: `You are Referee Agent.
+Synthesize grader + critic into final calibrated result.
+Return ONLY valid JSON:
+{"score":<integer 0-100>, "feedback":"<2-3 sentences>", "confidence":<number 0-1>, "debateSummary":"<1 sentence>"} `,
+      userMessage: `${userMessage}\n\nGrader output:\n${JSON.stringify(grader)}\n\nCritic output:\n${JSON.stringify(critic)}`,
+      maxTokens: 260
+    });
+
+    const referee = parseRefereeOutput(refereeRaw);
+    if (!referee) {
+      return NextResponse.json(
+        { error: "AI referee returned an invalid response format. Please try again." },
+        { status: 502 }
+      );
+    }
+
+    const feynmanScore = referee.score;
+    const feynmanFeedback = referee.feedback;
 
     const { data: existing } = await supabaseAny
       .from("student_submission_mastery")
@@ -183,8 +181,14 @@ Respond ONLY with valid JSON and no other text:
       ...existingMetadata,
       feynmanScore,
       feynmanFeedback,
+      feynmanConfidence: referee.confidence,
+      feynmanDebate: {
+        grader,
+        critic,
+        summary: referee.debateSummary,
+      },
       lastFeynmanAttemptAt: now,
-      masterySource: "feynman_prototype",
+      masterySource: "feynman_multi_agent",
     };
 
     await supabaseAny.from("student_submission_mastery").upsert(
@@ -202,6 +206,8 @@ Respond ONLY with valid JSON and no other text:
     return NextResponse.json({
       score: feynmanScore,
       feedback: feynmanFeedback,
+      confidence: referee.confidence,
+      debateSummary: referee.debateSummary,
       newMasteryScore,
       masteryLevel: newLevel,
     });
@@ -212,4 +218,114 @@ Respond ONLY with valid JSON and no other text:
       { status: 500 }
     );
   }
+}
+
+async function callGroq({
+  apiKey,
+  systemPrompt,
+  userMessage,
+  maxTokens
+}: {
+  apiKey: string;
+  systemPrompt: string;
+  userMessage: string;
+  maxTokens: number;
+}): Promise<string> {
+  const groqResponse = await fetch(GROQ_API_URL, {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer " + apiKey,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: GROQ_MODEL,
+      temperature: 0.2,
+      max_tokens: maxTokens,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userMessage },
+      ],
+    }),
+  });
+
+  const groqData = await groqResponse.json();
+  if (!groqResponse.ok) {
+    const providerMessage =
+      groqData?.error?.message || "Groq request failed.";
+    throw new Error(providerMessage);
+  }
+
+  const rawReply = groqData?.choices?.[0]?.message?.content;
+  if (typeof rawReply !== "string" || !rawReply.trim()) {
+    throw new Error("AI returned an empty response.");
+  }
+  return rawReply;
+}
+
+function parseJsonObject(raw: string): Record<string, unknown> | null {
+  try {
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return null;
+    const parsed = JSON.parse(jsonMatch[0]);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseGraderOutput(raw: string): GraderOutput | null {
+  const parsed = parseJsonObject(raw);
+  if (!parsed) return null;
+  const score = Number(parsed.score);
+  const feedback = typeof parsed.feedback === "string" ? parsed.feedback.trim() : "";
+  const strengths = Array.isArray(parsed.strengths)
+    ? parsed.strengths.map((item) => String(item).trim()).filter(Boolean).slice(0, 3)
+    : [];
+  const gaps = Array.isArray(parsed.gaps)
+    ? parsed.gaps.map((item) => String(item).trim()).filter(Boolean).slice(0, 3)
+    : [];
+  if (!Number.isFinite(score) || !feedback) return null;
+  return {
+    score: Math.round(Math.max(0, Math.min(100, score))),
+    feedback,
+    strengths,
+    gaps
+  };
+}
+
+function parseCriticOutput(raw: string): CriticOutput | null {
+  const parsed = parseJsonObject(raw);
+  if (!parsed) return null;
+  const adjustedScore = Number(parsed.adjustedScore);
+  const critique = typeof parsed.critique === "string" ? parsed.critique.trim() : "";
+  const confidence = Number(parsed.confidence);
+  if (!Number.isFinite(adjustedScore) || !critique || !Number.isFinite(confidence)) return null;
+  return {
+    adjustedScore: Math.round(Math.max(0, Math.min(100, adjustedScore))),
+    critique,
+    confidence: Math.max(0, Math.min(1, confidence))
+  };
+}
+
+function parseRefereeOutput(raw: string): {
+  score: number;
+  feedback: string;
+  confidence: number;
+  debateSummary: string;
+} | null {
+  const parsed = parseJsonObject(raw);
+  if (!parsed) return null;
+  const score = Number(parsed.score);
+  const feedback = typeof parsed.feedback === "string" ? parsed.feedback.trim() : "";
+  const confidence = Number(parsed.confidence);
+  const debateSummary = typeof parsed.debateSummary === "string" ? parsed.debateSummary.trim() : "";
+  if (!Number.isFinite(score) || !feedback || !Number.isFinite(confidence)) return null;
+  return {
+    score: Math.round(Math.max(0, Math.min(100, score))),
+    feedback,
+    confidence: Math.max(0, Math.min(1, confidence)),
+    debateSummary
+  };
 }
