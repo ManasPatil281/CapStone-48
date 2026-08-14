@@ -234,7 +234,7 @@ async function callGroq({
   const groqResponse = await fetch(GROQ_API_URL, {
     method: "POST",
     headers: {
-      Authorization: `******
+      Authorization: "Bearer " + apiKey,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
