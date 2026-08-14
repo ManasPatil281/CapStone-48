@@ -9,6 +9,8 @@ type MasteryLevel = "Beginner" | "Developing" | "Proficient" | "Mastered";
 type EvalResult = {
   score: number;
   feedback: string;
+  confidence?: number;
+  debateSummary?: string;
   newMasteryScore: number;
   masteryLevel: MasteryLevel;
 };
@@ -92,6 +94,8 @@ export function FeynmanClient({
       setResult({
         score: data.score,
         feedback: data.feedback,
+        confidence: typeof data.confidence === "number" ? data.confidence : undefined,
+        debateSummary: typeof data.debateSummary === "string" ? data.debateSummary : undefined,
         newMasteryScore: data.newMasteryScore,
         masteryLevel: data.masteryLevel,
       });
@@ -203,6 +207,16 @@ export function FeynmanClient({
           </div>
 
           <p className="text-sm leading-relaxed text-slate-300">{result.feedback}</p>
+          {typeof result.confidence === "number" && (
+            <p className="text-xs text-slate-400">
+              Confidence: {Math.round(result.confidence * 100)}%
+            </p>
+          )}
+          {result.debateSummary && (
+            <p className="rounded-md border border-slate-700/60 bg-slate-900/40 px-3 py-2 text-xs text-slate-300">
+              {result.debateSummary}
+            </p>
+          )}
 
           <p className="border-t border-slate-700/50 pt-3 text-xs text-slate-500">
             Updated mastery score:{" "}

@@ -3,7 +3,7 @@
 import { FormEvent, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import type { ChatHistoryMessage, SubmissionChatContext } from "@/lib/ai/types";
+import type { ChatHistoryMessage, SubmissionChatContext, TutorAgentState } from "@/lib/ai/types";
 import { Bot, Loader2, Send, Sparkles } from "lucide-react";
 
 interface Props {
@@ -17,6 +17,7 @@ export function SubmissionChatPanel({ context }: Props) {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [agentState, setAgentState] = useState<TutorAgentState | null>(null);
 
   const starterPrompts = useMemo(
     () => [
@@ -57,7 +58,17 @@ export function SubmissionChatPanel({ context }: Props) {
         body: JSON.stringify({
           message: text,
           context,
-          history: updatedMessages.map((msg) => ({ role: msg.role, content: msg.content }))
+          history: updatedMessages.map((msg) => ({ role: msg.role, content: msg.content })),
+          struggleSignal: {
+            confusionCount: updatedMessages
+              .filter((msg) => msg.role === "user")
+              .map((msg) => msg.content.toLowerCase())
+              .filter((content) =>
+                ["confused", "don't understand", "dont understand", "stuck", "lost", "unclear"].some((token) =>
+                  content.includes(token)
+                )
+              ).length
+          }
         })
       });
 
@@ -74,6 +85,9 @@ export function SubmissionChatPanel({ context }: Props) {
       };
 
       setMessages((prev) => [...prev, assistantMessage].slice(-20));
+      if (payload?.agentState && typeof payload.agentState === "object") {
+        setAgentState(payload.agentState as TutorAgentState);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Something went wrong while chatting.";
       setError(message);
@@ -100,6 +114,18 @@ export function SubmissionChatPanel({ context }: Props) {
           </div>
         </div>
       </div>
+
+      {agentState && (
+        <div className="rounded-lg border border-brand/25 bg-brand/10 px-4 py-3 text-xs text-slate-200">
+          <p className="font-semibold text-brand">Tutor plan: {agentState.goal}</p>
+          <p className="mt-1">
+            Stage: <span className="font-medium">{agentState.stage}</span> · Intervention:{" "}
+            <span className="font-medium">{agentState.intervention}</span> · Confidence:{" "}
+            <span className="font-medium">{Math.round(agentState.confidence * 100)}%</span>
+          </p>
+          <p className="mt-1 text-slate-300">Next action: {agentState.nextAction}</p>
+        </div>
+      )}
 
       <div className="max-h-[420px] space-y-3 overflow-y-auto pr-1">
         {messages.length === 0 ? (
