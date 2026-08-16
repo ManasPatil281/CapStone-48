@@ -7,6 +7,7 @@ export interface SubmissionChatContextBlock {
 export interface SubmissionChatContext {
   courseTitle: string;
   loTitle: string;
+  learningObjectId?: string;
   submissionTitle: string;
   submissionId: string;
   teacherName?: string;

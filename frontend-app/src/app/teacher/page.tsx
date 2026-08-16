@@ -9,6 +9,8 @@ import {
   MessageSquare,
   BarChart2
 } from "lucide-react";
+import { TeacherAnalyticsAgentPanel } from "@/components/teacher/TeacherAnalyticsAgentPanel";
+import { CourseAuthoringAgentPanel } from "@/components/teacher/CourseAuthoringAgentPanel";
 
 export default async function TeacherPage() {
   const user = await requireRole(["TEACHER", "ADMIN"]);
@@ -32,6 +34,12 @@ export default async function TeacherPage() {
         </div>
 
         <div className="h-px w-full bg-slate-800/60" />
+
+        {/* ── Instructor Agentic Analytics Section ── */}
+        <TeacherAnalyticsAgentPanel />
+
+        {/* ── Automated Course Authoring Assistant ── */}
+        <CourseAuthoringAgentPanel />
 
         {/* ── Primary action: Create New Submission ── */}
         <div>
@@ -76,7 +84,7 @@ export default async function TeacherPage() {
           </Link>
         </div>
 
-        {/* ── Secondary actions: Coming Soon ── */}
+        {/* ── Secondary actions ── */}
         <div className="space-y-3">
           <p className="text-[11px] font-semibold uppercase tracking-label text-slate-600">
             Secondary Actions

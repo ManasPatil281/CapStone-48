@@ -1,14 +1,28 @@
-import { NextResponse } from "next/server";
-import { buildLoAssistantSystemPrompt } from "@/lib/ai/prompt";
-import type { ChatHistoryMessage, SubmissionChatContext } from "@/lib/ai/types";
+/**
+ * POST /api/chat — LO Chat Assistant (Agentic)
+ *
+ * Upgraded from single-shot Groq fetch to a LangChain ReAct agent
+ * with tool-calling capabilities:
+ * - fetch_prerequisites: Looks up prerequisite chain
+ * - get_quiz_weakness: Finds weak quiz topics
+ * - get_content_block: Retrieves detailed content
+ * - get_mastery_status: Checks mastery score/level
+ *
+ * Falls back to a simple LangChain chain if agent creation fails.
+ */
 
-const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
-const GROQ_MODEL = "llama-3.1-8b-instant";
+import { NextResponse } from "next/server";
+import type { ChatHistoryMessage, SubmissionChatContext } from "@/lib/ai/types";
+import { invokeTutorAgent } from "@/lib/ai/agents/tutor-agent";
+import { getGroqChat } from "@/lib/ai/model";
+import { buildLoAssistantSystemPrompt } from "@/lib/ai/prompt";
+import { HumanMessage, SystemMessage, AIMessage } from "@langchain/core/messages";
 
 interface ChatRequestBody {
   message?: string;
   context?: SubmissionChatContext;
   history?: ChatHistoryMessage[];
+  studentId?: string;
 }
 
 export async function POST(request: Request) {
@@ -37,46 +51,51 @@ export async function POST(request: Request) {
         content: entry.content.trim().slice(0, 1200)
       }));
 
-    const payload = {
-      model: GROQ_MODEL,
-      temperature: 0.35,
-      max_tokens: 600,
-      messages: [
-        {
-          role: "system",
-          content: buildLoAssistantSystemPrompt(body.context)
-        },
-        ...safeHistory,
-        {
-          role: "user",
-          content: message.slice(0, 1200)
-        }
-      ]
-    };
+    try {
+      // Try the agentic path first
+      const result = await invokeTutorAgent({
+        message,
+        context: body.context,
+        history: safeHistory as ChatHistoryMessage[],
+        studentId: body.studentId,
+      });
 
-    const groqResponse = await fetch(GROQ_API_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(payload)
-    });
+      return NextResponse.json({
+        reply: result.reply,
+        model: result.model,
+        toolsUsed: result.toolsUsed,
+        agentic: true,
+      });
+    } catch (agentError) {
+      // Fallback: simple LangChain chain (no tools)
+      console.warn("[api/chat] Agent failed, falling back to simple chain:", agentError);
 
-    const data = await groqResponse.json();
+      const model = getGroqChat({ temperature: 0.35, maxTokens: 600 });
 
-    if (!groqResponse.ok) {
-      const providerMessage =
-        data?.error?.message || data?.message || "Groq request failed.";
-      return NextResponse.json({ error: providerMessage }, { status: 502 });
+      const messages = [
+        new SystemMessage(buildLoAssistantSystemPrompt(body.context)),
+        ...safeHistory.map((entry) =>
+          entry.role === "user"
+            ? new HumanMessage(entry.content)
+            : new AIMessage(entry.content)
+        ),
+        new HumanMessage(message.slice(0, 1200)),
+      ];
+
+      const response = await model.invoke(messages);
+      const reply = typeof response.content === "string" ? response.content.trim() : "";
+
+      if (!reply) {
+        return NextResponse.json({ error: "AI returned an empty response." }, { status: 502 });
+      }
+
+      return NextResponse.json({
+        reply,
+        model: "llama-3.1-8b-instant",
+        toolsUsed: [],
+        agentic: false,
+      });
     }
-
-    const reply = data?.choices?.[0]?.message?.content;
-    if (typeof reply !== "string" || !reply.trim()) {
-      return NextResponse.json({ error: "Groq returned an empty response." }, { status: 502 });
-    }
-
-    return NextResponse.json({ reply: reply.trim(), model: GROQ_MODEL });
   } catch (error) {
     console.error("[api/chat] Unexpected error:", error);
     return NextResponse.json({ error: "Unexpected server error." }, { status: 500 });

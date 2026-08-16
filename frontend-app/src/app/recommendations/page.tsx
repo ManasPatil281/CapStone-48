@@ -4,6 +4,9 @@ import type { Route } from "next";
 import { ArrowLeft, ArrowRight } from "lucide-react";
 import { requireAuth } from "@/lib/auth/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { SpacedRepetitionWidget } from "@/components/recommendations/SpacedRepetitionWidget";
+import { GraphMutatorWidget } from "@/components/recommendations/GraphMutatorWidget";
+import { PeerMatchingWidget } from "@/components/recommendations/PeerMatchingWidget";
 
 const ACTIVE_RECALL_DAYS = 0;
 
@@ -625,6 +628,10 @@ export default async function RecommendationsPage() {
             {Array.from(new Set(sectionErrors)).join(" ")}
           </div>
         )}
+
+        <SpacedRepetitionWidget />
+        <GraphMutatorWidget />
+        <PeerMatchingWidget />
 
         <RecommendationSection model={continueLearning} />
         <RecommendationSection model={recommendedNext} />

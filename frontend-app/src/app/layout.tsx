@@ -2,10 +2,11 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { cn } from "@/lib/utils";
 import { UserNav } from "@/components/layout/UserNav";
+import { AgentModeOverlay } from "@/components/layout/AgentModeOverlay";
 
 export const metadata: Metadata = {
   title: "Adaptive Learning Platform",
-  description: "AI-powered modular learning paths"
+  description: "AI-powered modular learning paths with autonomous agent mode"
 };
 
 export default function RootLayout({
@@ -54,6 +55,9 @@ export default function RootLayout({
         </header>
 
         {children}
+
+        {/* Global Agent Mode Overlay Co-pilot */}
+        <AgentModeOverlay />
       </body>
     </html>
   );

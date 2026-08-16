@@ -28,6 +28,7 @@ const PRIORITY_KEYS = [
 export function buildSubmissionChatContext(input: {
   courseTitle: string;
   loTitle: string;
+  learningObjectId?: string;
   submissionId: string;
   submissionTitle?: string;
   teacherName?: string;
@@ -39,6 +40,7 @@ export function buildSubmissionChatContext(input: {
   return {
     courseTitle: compactText(input.courseTitle, 100) || "Untitled Course",
     loTitle: compactText(input.loTitle, 120) || "Untitled Learning Object",
+    learningObjectId: input.learningObjectId ? compactText(input.learningObjectId, 80) : undefined,
     submissionTitle: compactText(input.submissionTitle || `Submission ${input.submissionId.slice(0, 8)}`, 120),
     submissionId: compactText(input.submissionId, 80),
     teacherName: compactText(input.teacherName || "", 100) || undefined,
