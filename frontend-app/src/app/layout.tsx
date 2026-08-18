@@ -46,7 +46,7 @@ export default function RootLayout({
                 </div>
               </div>
               <span className="text-sm font-semibold tracking-tight text-slate-200 transition-colors group-hover:text-white">
-                Adaptive Learning
+                Pathfinder
               </span>
             </a>
 
