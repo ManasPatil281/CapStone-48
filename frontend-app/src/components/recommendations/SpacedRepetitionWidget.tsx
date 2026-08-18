@@ -47,13 +47,13 @@ export function SpacedRepetitionWidget() {
           </div>
           <div>
             <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
-              Spaced Repetition Retention Engine
+              Revision reminder agent
               <span className="rounded-full bg-indigo-500/10 px-2 py-0.5 text-[9px] font-semibold text-indigo-300 border border-indigo-500/20">
-                EBBINGHAUS AGENT
+                MEMORY CHECK
               </span>
             </h3>
             <p className="text-[11px] text-slate-400">
-              Calculates your personalized retention decay curve to prevent forgetting.
+              This agent checks how well you remember topics and reminds you before learning fades.
             </p>
           </div>
         </div>
@@ -68,7 +68,7 @@ export function SpacedRepetitionWidget() {
             <div className="space-y-1">
               <div className="font-semibold text-slate-200">{item.loTitle}</div>
               <div className="text-[10px] text-slate-400">
-                Last reviewed {item.daysSinceLastReview} days ago
+                Last revised {item.daysSinceLastReview} days ago
               </div>
             </div>
 
@@ -95,12 +95,12 @@ export function SpacedRepetitionWidget() {
             {item.status === "URGENT" ? (
               <Link href={`/courses/dsa/submission/${item.submissionId}`}>
                 <Button size="sm" className="h-7 text-[11px] bg-red-600 hover:bg-red-500 text-white gap-1">
-                  <RotateCcw className="h-3 w-3" /> Revise Now
+                  <RotateCcw className="h-3 w-3" /> Revise now
                 </Button>
               </Link>
             ) : (
               <span className="text-[10px] text-slate-500 font-medium px-2 py-1 rounded bg-slate-900 border border-slate-800">
-                Optimal
+                Good timing
               </span>
             )}
           </div>

@@ -82,7 +82,7 @@ export function SubmissionChatPanel({ context }: Props) {
     }
   }
 
-  function usePrompt(prompt: string) {
+  function handlePromptClick(prompt: string) {
     setInput(prompt);
     setError(null);
   }
@@ -139,7 +139,7 @@ export function SubmissionChatPanel({ context }: Props) {
             <button
               key={prompt}
               type="button"
-              onClick={() => usePrompt(prompt)}
+              onClick={() => handlePromptClick(prompt)}
               className="inline-flex min-h-9 cursor-pointer items-center gap-1 rounded-full border border-slate-700/80 bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:border-slate-600 hover:bg-slate-800"
               disabled={isLoading}
             >

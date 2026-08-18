@@ -91,7 +91,7 @@ export async function POST(request: Request) {
 
       return NextResponse.json({
         reply,
-        model: "llama-3.1-8b-instant",
+        model: "openai/gpt-oss-120b",
         toolsUsed: [],
         agentic: false,
       });

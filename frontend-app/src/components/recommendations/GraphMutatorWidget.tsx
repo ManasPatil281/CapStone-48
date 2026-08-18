@@ -39,13 +39,13 @@ export function GraphMutatorWidget() {
           </div>
           <div>
             <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
-              Autonomous Learning Graph Mutator
+              Learning path adjuster
               <span className="rounded-full bg-cyan-500/10 px-2 py-0.5 text-[9px] font-semibold text-cyan-300 border border-cyan-500/20">
-                REAL-TIME GRAPH ADAPTATION
+                PATH ADAPTATION
               </span>
             </h3>
             <p className="text-[11px] text-slate-400">
-              Dynamically injects bridge nodes or fast-tracks topics based on your learning velocity.
+              This agent looks at your pace and changes the learning path when you are moving too fast or need more support.
             </p>
           </div>
         </div>
@@ -71,7 +71,7 @@ export function GraphMutatorWidget() {
       {report && (
         <div className="space-y-3 text-xs animate-in fade-in-50">
           <div className="flex items-center justify-between rounded-lg bg-slate-950/80 p-3 border border-slate-800">
-            <span className="text-slate-400">Learning Velocity Rating</span>
+            <span className="text-slate-400">Learning pace score</span>
             <span className="font-bold text-cyan-400 font-mono">{report.learningVelocityScore}/100</span>
           </div>
 
@@ -90,7 +90,7 @@ export function GraphMutatorWidget() {
                 }`}
               >
                 <div className="flex items-center justify-between font-bold">
-                  <span>Action: {mut.actionType}</span>
+                  <span>{mut.actionType === "SCAFFOLD" ? "Add support" : mut.actionType === "FAST_TRACK" ? "Move ahead faster" : "Keep the current path"}</span>
                   <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-slate-900 border border-slate-800">
                     {mut.nodeTitle}
                   </span>
@@ -100,7 +100,7 @@ export function GraphMutatorWidget() {
                 {mut.injectedMicroPrerequisites && mut.injectedMicroPrerequisites.length > 0 && (
                   <div className="mt-2 space-y-1 pt-2 border-t border-amber-500/20">
                     <span className="font-semibold text-[10px] uppercase tracking-wider text-amber-300">
-                      Injected Scaffold Nodes:
+                      Small support steps added:
                     </span>
                     {mut.injectedMicroPrerequisites.map((p, pIdx) => (
                       <div key={pIdx} className="flex justify-between text-[11px] bg-slate-950/60 p-1.5 rounded">

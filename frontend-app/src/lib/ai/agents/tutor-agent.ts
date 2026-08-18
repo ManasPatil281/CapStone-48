@@ -169,6 +169,6 @@ export async function invokeTutorAgent(
   return {
     reply: reply || "I could not generate a response right now.",
     toolsUsed,
-    model: "llama-3.1-8b-instant",
+    model: "openai/gpt-oss-120b",
   };
 }

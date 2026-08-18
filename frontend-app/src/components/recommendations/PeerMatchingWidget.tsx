@@ -38,13 +38,13 @@ export function PeerMatchingWidget() {
           </div>
           <div>
             <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
-              Collaborative Peer Matching Agent
+              Study partner recommender
               <span className="rounded-full bg-purple-500/10 px-2 py-0.5 text-[9px] font-semibold text-purple-300 border border-purple-500/20">
-                PEER TUTORING
+                PEER SUPPORT
               </span>
             </h3>
             <p className="text-[11px] text-slate-400">
-              Matches struggling students with peers who recently mastered the concept.
+              This agent looks for a peer who recently mastered the same concept and suggests a helpful study connection.
             </p>
           </div>
         </div>
@@ -80,12 +80,12 @@ export function PeerMatchingWidget() {
           </div>
 
           <p className="text-slate-300">
-            <strong>Peer Role:</strong> {match.peerRoleDescription}
+            <strong>Why this match:</strong> {match.peerRoleDescription}
           </p>
 
           <div className="rounded bg-slate-900 border border-slate-800 p-2.5 space-y-1">
-            <span className="text-[10px] uppercase font-bold text-slate-400">Suggested Icebreaker</span>
-            <p className="text-slate-200 italic">"{match.icebreakerQuestion}"</p>
+            <span className="text-[10px] uppercase font-bold text-slate-400">Suggested conversation starter</span>
+            <p className="text-slate-200 italic">“{match.icebreakerQuestion}”</p>
           </div>
         </div>
       )}

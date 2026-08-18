@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { Route } from "next";
 import { ArrowLeft, ArrowRight } from "lucide-react";
+import { generateRecommendations } from "@/lib/ai/agents/learning-router";
 import { requireAuth } from "@/lib/auth/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { SpacedRepetitionWidget } from "@/components/recommendations/SpacedRepetitionWidget";
@@ -134,7 +135,12 @@ function RecommendationSection({ model }: { model: SectionModel }) {
                 {card.meta && <p className="text-[11px] text-slate-500">{card.meta}</p>}
               </div>
 
-              <p className="text-xs leading-relaxed text-slate-400">{card.reason}</p>
+              <div className="space-y-1.5">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Why this is recommended
+                </p>
+                <p className="text-xs leading-relaxed text-slate-300">{card.reason}</p>
+              </div>
               {card.helperText && <p className="text-xs leading-relaxed text-slate-500">{card.helperText}</p>}
 
               <Link
@@ -168,6 +174,11 @@ export default async function RecommendationsPage() {
   const supabaseAny = supabase as any;
 
   const sectionErrors: string[] = [];
+  const latestVisitBySubmission = new Map<string, VisitRow>();
+  const latestAttemptBySubmission = new Map<string, QuizAttemptRow>();
+  const totalByType = new Map<string, number>();
+  const deliveryTypeNameById = new Map<string, string>();
+  const prerequisiteEdges: Array<{ sourceLoId: string; targetLoId: string }> = [];
 
   const submissionById = new Map<string, SubmissionDetail>();
   const masteryBySubmissionId = new Map<string, number | null>();
@@ -253,7 +264,6 @@ export default async function RecommendationsPage() {
 
     if (error) throw error;
 
-    const latestVisitBySubmission = new Map<string, VisitRow>();
     ((data ?? []) as VisitRow[]).forEach((row) => {
       if (!row.submission_id) return;
       const current = latestVisitBySubmission.get(row.submission_id);
@@ -290,7 +300,7 @@ export default async function RecommendationsPage() {
       title: item.detail.title,
       subtitle: item.detail.learningObjectTitle,
       meta: `${item.detail.courseTitle} • ${formatMastery(masteryBySubmissionId.get(item.id))}`,
-      reason: "You started this module but mastery is still developing.",
+      reason: "You opened this topic recently but your mastery is still below the level needed to move ahead confidently. We are nudging it again so the skill becomes stronger before you continue.",
       ctaLabel: "Continue",
       href: buildSubmissionHref(item.detail.courseSlug, item.id),
     }));
@@ -376,8 +386,8 @@ export default async function RecommendationsPage() {
         subtitle: detail.title,
         meta: detail.courseTitle,
         reason: usedPathSignal
-          ? "This follows a module where you are already proficient."
-          : "Suggested from recently active approved modules while we build your path signal.",
+          ? "You already showed strength in the related topic, and this next step follows the learning path that usually comes after it."
+          : "This follows a recently completed or active learning path, so it is a safe next step while the system learns more about your progress.",
         ctaLabel: "Start",
         href: buildLoHref(detail.courseSlug, detail.learningObjectId),
       }));
@@ -403,12 +413,27 @@ export default async function RecommendationsPage() {
 
     if (styleErr) throw styleErr;
 
-    const totalByType = new Map<string, number>();
     ((styleRows ?? []) as ContentTimeRow[]).forEach((row) => {
       if (!row.delivery_type_id) return;
       const current = totalByType.get(row.delivery_type_id) ?? 0;
       totalByType.set(row.delivery_type_id, current + Number(row.active_seconds ?? 0));
     });
+
+    const deliveryTypeIds = Array.from(totalByType.keys());
+    if (deliveryTypeIds.length > 0) {
+      const { data: namesData, error: namesErr } = await supabaseAny
+        .from("delivery_type")
+        .select("id, name")
+        .in("id", deliveryTypeIds);
+
+      if (namesErr) throw namesErr;
+
+      ((namesData ?? []) as Array<{ id: string; name: string | null }>).forEach((row) => {
+        if (row.id) {
+          deliveryTypeNameById.set(row.id, row.name ?? "Content style");
+        }
+      });
+    }
 
     const topType = Array.from(totalByType.entries()).sort((a, b) => b[1] - a[1])[0];
 
@@ -444,7 +469,7 @@ export default async function RecommendationsPage() {
           title: detail.title,
           subtitle: detail.learningObjectTitle,
           meta: `${detail.courseTitle} • ${typeName}`,
-          reason: `You spend more focused time with ${typeName}.`,
+          reason: `Most of your study time in this area is spent with ${typeName} content, and learning usually sticks better when the material matches how you prefer to study.`,
           ctaLabel: "Try similar content",
           href: buildSubmissionHref(detail.courseSlug, detail.id),
         }));
@@ -472,7 +497,6 @@ export default async function RecommendationsPage() {
 
     if (attemptErr) throw attemptErr;
 
-    const latestAttemptBySubmission = new Map<string, QuizAttemptRow>();
     ((attempts ?? []) as QuizAttemptRow[]).forEach((row) => {
       if (!row.submission_id) return;
       const current = latestAttemptBySubmission.get(row.submission_id);
@@ -508,7 +532,7 @@ export default async function RecommendationsPage() {
         title: item.detail.title,
         subtitle: item.detail.learningObjectTitle,
         meta: `${item.detail.courseTitle} • ${formatQuizScore(item.attempt.score_percentage)}`,
-        reason: "You did well earlier. Revisit it to strengthen retention.",
+        reason: `You scored well on this before, and enough time has passed that recall may be fading. A quick revision now helps turn short-term memory into long-term understanding.`,
         ctaLabel: "Revise quiz",
         href: buildSubmissionHref(item.detail.courseSlug, item.id),
       }));
@@ -541,7 +565,7 @@ export default async function RecommendationsPage() {
         title: "Explain this concept in your own words",
         subtitle: `${detail.title} • ${detail.learningObjectTitle}`,
         meta: detail.courseTitle,
-        reason: "Explaining the concept can reveal gaps in understanding.",
+        reason: "This topic is still below your comfort level, and explaining it in your own words is a simple way to spot missing pieces before the next assessment.",
         helperText:
           "Feynman explanation scoring can be connected to the existing AI tutor in the next phase.",
         ctaLabel: "Explain concept",
@@ -560,7 +584,163 @@ export default async function RecommendationsPage() {
     feynmanPrototype,
   ];
 
-  const hasAnyCards = sections.some((section) => section.cards.length > 0);
+  try {
+    const knownLoIds = uniqueStrings(Array.from(submissionById.values()).map((s) => s.learningObjectId));
+    if (knownLoIds.length > 0) {
+      const { data: edgeRows, error: edgeErr } = await supabaseAny
+        .from("teacher_lo_submission_edge")
+        .select("source_lo_id, target_lo_id")
+        .in("source_lo_id", knownLoIds);
+
+      if (edgeErr) throw edgeErr;
+
+      (edgeRows ?? []).forEach((row: any) => {
+        if (row.source_lo_id && row.target_lo_id) {
+          prerequisiteEdges.push({
+            sourceLoId: String(row.source_lo_id),
+            targetLoId: String(row.target_lo_id),
+          });
+        }
+      });
+    }
+  } catch (error) {
+    console.error("[RecommendationsPage] Failed to load prerequisite edges for AI routing:", error);
+  }
+
+  const aiAvailableSubmissions = Array.from(submissionById.values())
+    .slice(0, 20)
+    .map((submission) => ({
+      id: submission.id,
+      title: submission.title,
+      loTitle: submission.learningObjectTitle,
+      courseTitle: submission.courseTitle,
+      courseSlug: submission.courseSlug,
+      loId: submission.learningObjectId,
+      mastery: masteryBySubmissionId.get(submission.id) ?? null,
+    }));
+
+  const aiSignalMastery = Array.from(masteryBySubmissionId.entries()).map(([submissionId, score]) => ({
+    submissionId,
+    score: typeof score === "number" ? score : 0,
+    level:
+      typeof score === "number"
+        ? score >= 70
+          ? "advanced"
+          : score >= 40
+            ? "developing"
+            : "beginner"
+        : "beginner",
+    lastCalculatedAt: new Date().toISOString(),
+  }));
+
+  const aiSignalVisits = Array.from(latestVisitBySubmission.values())
+    .filter((row) => row.submission_id)
+    .slice(0, 10)
+    .map((row) => ({
+      submissionId: String(row.submission_id),
+      startedAt: row.started_at ?? new Date().toISOString(),
+      endedAt: row.ended_at ?? null,
+      activeSeconds: 0,
+      idleSeconds: 0,
+    }));
+
+  const aiSignalQuizzes = Array.from(latestAttemptBySubmission.values())
+    .filter((row) => row.submission_id)
+    .slice(0, 10)
+    .map((row) => ({
+      submissionId: String(row.submission_id),
+      scores: typeof row.score_percentage === "number" ? [row.score_percentage] : [0],
+      latestAt: row.submitted_at ?? row.created_at ?? new Date().toISOString(),
+    }));
+
+  const aiSignalStyles = Array.from(totalByType.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([deliveryTypeId, totalSeconds]) => ({
+      deliveryTypeId,
+      deliveryTypeName: deliveryTypeNameById.get(deliveryTypeId) ?? "Content style",
+      totalActiveSeconds: totalSeconds,
+    }));
+
+  const dynamicRecommendationOutput = await generateRecommendations({
+    signals: {
+      masteryScores: aiSignalMastery,
+      recentVisits: aiSignalVisits,
+      quizTrajectories: aiSignalQuizzes,
+      contentStylePreferences: aiSignalStyles,
+    },
+    availableSubmissions: aiAvailableSubmissions,
+    prerequisiteEdges,
+  }).catch((error) => {
+    console.error("[RecommendationsPage] AI recommendation generation failed:", error);
+    return null;
+  });
+
+  const aiSectionCardsByType = new Map<string, SectionCard[]>();
+  if (dynamicRecommendationOutput) {
+    dynamicRecommendationOutput.sections.forEach((section) => {
+      const mappedCards: SectionCard[] = [];
+
+      section.items.forEach((item) => {
+        const detail = submissionById.get(item.submissionId);
+        if (!detail) return;
+
+        mappedCards.push({
+          key: `${section.sectionType}-${detail.id}`,
+          title: detail.title,
+          subtitle: detail.learningObjectTitle,
+          meta: `${detail.courseTitle} • ${formatMastery(masteryBySubmissionId.get(detail.id))}`,
+          reason: item.reason,
+          helperText: `Confidence ${item.confidence.toFixed(2)} • Priority ${item.priority}`,
+          ctaLabel:
+            section.sectionType === "continue"
+              ? "Continue"
+              : section.sectionType === "next"
+                ? "Start"
+                : section.sectionType === "style"
+                  ? "Try similar content"
+                  : section.sectionType === "recall"
+                    ? "Revise quiz"
+                    : "Explain concept",
+          href:
+            section.sectionType === "continue" || section.sectionType === "recall"
+              ? buildSubmissionHref(detail.courseSlug, detail.id)
+              : section.sectionType === "feynman"
+                ? (`/recommendations/feynman/${detail.id}` as Route)
+                : buildLoHref(detail.courseSlug, detail.learningObjectId),
+        });
+      });
+
+      if (mappedCards.length > 0) {
+        aiSectionCardsByType.set(section.sectionType, mappedCards);
+      }
+    });
+  }
+
+  const mergedSections = sections.map((section) => {
+    const sectionType =
+      section.title === "Continue learning"
+        ? "continue"
+        : section.title === "Recommended next LOs"
+          ? "next"
+          : section.title === "Based on your preferred content style"
+            ? "style"
+            : section.title === "Active recall / revision reminders"
+              ? "recall"
+              : "feynman";
+
+    const aiCards = aiSectionCardsByType.get(sectionType);
+    if (!aiCards || aiCards.length === 0) {
+      return section;
+    }
+
+    return {
+      ...section,
+      cards: aiCards,
+    };
+  });
+
+  const hasAnyCards = mergedSections.some((section) => section.cards.length > 0);
 
   const starterRecommendations: SectionCard[] = [];
   if (!hasAnyCards) {
@@ -591,7 +771,7 @@ export default async function RecommendationsPage() {
             title: detail.title,
             subtitle: detail.learningObjectTitle,
             meta: detail.courseTitle,
-            reason: "A good place to continue your progress while we gather more learning signals.",
+            reason: "The system does not have enough personal signals yet, so this is a safe starting point while it learns which topics fit your pace and study style.",
             ctaLabel: "Start",
             href: buildSubmissionHref(detail.courseSlug, detail.id),
           }))
@@ -618,9 +798,20 @@ export default async function RecommendationsPage() {
             <h1 className="text-3xl font-bold tracking-tight text-slate-50">Recommendations</h1>
             <p className="mt-1 text-sm text-slate-500">
               Personalised suggestions based on your learning activity, quiz performance, and content
-              preferences.
+              preferences. Each recommendation explains what we noticed and why it is useful for you.
             </p>
           </div>
+        </div>
+
+        <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+            How these suggestions are built
+          </p>
+          <p className="mt-2 text-sm leading-relaxed text-slate-300">
+            The system looks at what you recently studied, how well you answered quizzes, how long you stayed engaged,
+            and which content style helps you learn best. It then chooses the next step that matches your pattern instead
+            of giving a random suggestion.
+          </p>
         </div>
 
         {sectionErrors.length > 0 && (
@@ -633,11 +824,11 @@ export default async function RecommendationsPage() {
         <GraphMutatorWidget />
         <PeerMatchingWidget />
 
-        <RecommendationSection model={continueLearning} />
-        <RecommendationSection model={recommendedNext} />
-        <RecommendationSection model={preferredStyle} />
-        <RecommendationSection model={activeRecall} />
-        <RecommendationSection model={feynmanPrototype} />
+        <RecommendationSection model={mergedSections[0]} />
+        <RecommendationSection model={mergedSections[1]} />
+        <RecommendationSection model={mergedSections[2]} />
+        <RecommendationSection model={mergedSections[3]} />
+        <RecommendationSection model={mergedSections[4]} />
 
         {!hasAnyCards && (
           <section className="space-y-3 rounded-xl border border-slate-800 bg-slate-900/40 p-4 sm:p-5">
@@ -662,7 +853,12 @@ export default async function RecommendationsPage() {
                       {card.meta && <p className="text-[11px] text-slate-500">{card.meta}</p>}
                     </div>
 
-                    <p className="text-xs leading-relaxed text-slate-400">{card.reason}</p>
+                    <div className="space-y-1.5">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                        Why this is recommended
+                      </p>
+                      <p className="text-xs leading-relaxed text-slate-300">{card.reason}</p>
+                    </div>
 
                     <Link
                       href={card.href}

@@ -34,6 +34,23 @@ export function QuizSession({ assessment, trackingContext }: Props) {
   const [submitted, setSubmitted] = useState(false);
   const [isSubmittingAttempt, setIsSubmittingAttempt] = useState(false);
 
+  const assessmentAny = assessment as unknown as {
+    id: string;
+    randomization_mode?: number | null;
+    sample_percentage?: number | null;
+  };
+
+  const normalizedQuestions = useMemo(
+    () =>
+      assessment
+        ? ((assessment.questions ?? []) as unknown as QuizQuestion[]).map((question) => ({
+            ...question,
+            options: question.options ?? [],
+          }))
+        : [],
+    [assessment]
+  );
+
   if (!assessment) {
     return (
       <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-slate-800 bg-slate-900/30 py-12 text-center">
@@ -42,12 +59,6 @@ export function QuizSession({ assessment, trackingContext }: Props) {
       </div>
     );
   }
-
-  const assessmentAny = assessment as unknown as {
-    id: string;
-    randomization_mode?: number | null;
-    sample_percentage?: number | null;
-  };
 
   const randomizationMode =
     typeof assessmentAny.randomization_mode === "number" &&
@@ -59,15 +70,6 @@ export function QuizSession({ assessment, trackingContext }: Props) {
     typeof assessmentAny.sample_percentage === "number"
       ? assessmentAny.sample_percentage
       : null;
-
-  const normalizedQuestions = useMemo(
-    () =>
-      ((assessment.questions ?? []) as unknown as QuizQuestion[]).map((question) => ({
-        ...question,
-        options: question.options ?? [],
-      })),
-    [assessment.questions]
-  );
 
   const questions = useMemo(() => {
     const withShuffledOptions = normalizedQuestions.map((question) => ({

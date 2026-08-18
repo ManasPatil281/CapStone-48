@@ -10,11 +10,11 @@ import { ChatGroq } from "@langchain/groq";
 
 /* ── defaults ────────────────────────────────────────────────────────── */
 
-const DEFAULT_MODEL = "llama-3.1-8b-instant";
-const FALLBACK_MODEL = "llama-3.1-70b-versatile";
+const DEFAULT_MODEL = "openai/gpt-oss-120b";
+const FALLBACK_MODEL = "openai/gpt-oss-20b";
 
 export interface GroqChatOptions {
-  /** Model name override (default: llama-3.1-8b-instant). */
+  /** Model name override (default: openai/gpt-oss-120b). */
   model?: string;
   /** Sampling temperature (0-1, default: 0.35). */
   temperature?: number;

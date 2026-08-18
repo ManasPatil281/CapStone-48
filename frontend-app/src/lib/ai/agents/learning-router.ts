@@ -11,6 +11,7 @@
 
 import { getGroqChat } from "@/lib/ai/model";
 import { LEARNING_ROUTER_PROMPT } from "@/lib/ai/prompts";
+import { AIMessage, HumanMessage } from "@langchain/core/messages";
 import {
   RecommendationOutputSchema,
   type RecommendationOutput,
@@ -160,6 +161,171 @@ export interface LearningRouterInput {
   prerequisiteEdges: PrerequisiteEdge[];
 }
 
+type RecommendationSectionType = "continue" | "next" | "style" | "recall" | "feynman";
+const IS_DEV = process.env.NODE_ENV !== "production";
+
+function toTextContent(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => (typeof part === "string" ? part : (part as { text?: string }).text ?? ""))
+      .join("\n");
+  }
+  return "";
+}
+
+function logRawPreview(label: string, raw: string): void {
+  if (!IS_DEV) return;
+  const compact = raw.replace(/\s+/g, " ").trim();
+  console.debug(`[LearningRouter] ${label} preview (first 300): ${compact.slice(0, 300)}`);
+}
+
+function parseRecommendationOutput(raw: string): RecommendationOutput {
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start < 0 || end < 0 || end <= start) {
+    throw new Error("Model response did not contain a valid JSON object.");
+  }
+
+  const parsed = JSON.parse(raw.slice(start, end + 1));
+  const validated = RecommendationOutputSchema.safeParse(parsed);
+  if (!validated.success) {
+    throw new Error(`Model JSON failed schema validation: ${validated.error.message}`);
+  }
+
+  return validated.data;
+}
+
+function buildHeuristicRecommendations(input: LearningRouterInput): RecommendationOutput {
+  const now = Date.now();
+  const masteryById = new Map(
+    input.signals.masteryScores.map((m) => [m.submissionId, m.score])
+  );
+  const visitById = new Map(
+    input.signals.recentVisits.map((v) => [
+      v.submissionId,
+      {
+        timestamp: Math.max(Date.parse(v.endedAt ?? ""), Date.parse(v.startedAt ?? "")) || 0,
+        activeSeconds: v.activeSeconds,
+        idleSeconds: v.idleSeconds,
+      },
+    ])
+  );
+  const quizAvgById = new Map(
+    input.signals.quizTrajectories.map((q) => {
+      const avg = q.scores.length
+        ? q.scores.reduce((sum, s) => sum + s, 0) / q.scores.length
+        : 0;
+      return [q.submissionId, avg] as const;
+    })
+  );
+
+  const all = input.availableSubmissions;
+  const byLoId = new Map<string, AvailableSubmission[]>();
+  all.forEach((s) => {
+    const bucket = byLoId.get(s.loId) ?? [];
+    bucket.push(s);
+    byLoId.set(s.loId, bucket);
+  });
+
+  const addSection = (
+    sectionType: RecommendationSectionType,
+    items: Array<{ submissionId: string; reason: string; confidence: number; priority: number }>
+  ) => ({ sectionType, items: items.slice(0, 5) });
+
+  const continueItems = all
+    .filter((s) => {
+      const mastery = masteryById.get(s.id);
+      return typeof mastery !== "number" || mastery < 70;
+    })
+    .sort((a, b) => (visitById.get(b.id)?.timestamp ?? 0) - (visitById.get(a.id)?.timestamp ?? 0))
+    .slice(0, 5)
+    .map((s, idx) => {
+      const mastery = masteryById.get(s.id) ?? 0;
+      const visit = visitById.get(s.id);
+      const activeMin = Math.round((visit?.activeSeconds ?? 0) / 60);
+      return {
+        submissionId: s.id,
+        reason: `You recently spent ${activeMin} minutes on this topic and mastery is ${Math.round(mastery)}%, so revisiting now will close understanding gaps before moving ahead.`,
+        confidence: 0.7,
+        priority: idx + 1,
+      };
+    });
+
+  const masteredLoIds = new Set(
+    input.signals.masteryScores
+      .filter((m) => m.score >= 70)
+      .map((m) => input.availableSubmissions.find((s) => s.id === m.submissionId)?.loId)
+      .filter((v): v is string => Boolean(v))
+  );
+
+  const nextCandidates = input.prerequisiteEdges
+    .filter((e) => masteredLoIds.has(e.sourceLoId))
+    .flatMap((e) => byLoId.get(e.targetLoId) ?? [])
+    .filter((s, idx, arr) => arr.findIndex((x) => x.id === s.id) === idx)
+    .filter((s) => (masteryById.get(s.id) ?? 0) < 70)
+    .slice(0, 5)
+    .map((s, idx) => ({
+      submissionId: s.id,
+      reason: "You already have good mastery in the prerequisite concept, so this is the natural next topic in your learning path.",
+      confidence: 0.68,
+      priority: idx + 1,
+    }));
+
+  const topStyle = input.signals.contentStylePreferences
+    .slice()
+    .sort((a, b) => b.totalActiveSeconds - a.totalActiveSeconds)[0];
+
+  const styleItems = all
+    .filter((s) => (masteryById.get(s.id) ?? 0) < 70)
+    .slice(0, 5)
+    .map((s, idx) => ({
+      submissionId: s.id,
+      reason: topStyle
+        ? `You learn best with ${topStyle.deliveryTypeName} content based on your activity pattern, so this topic is prioritized in that style.`
+        : "This topic is suggested while the system learns your preferred study style.",
+      confidence: topStyle ? 0.64 : 0.5,
+      priority: idx + 1,
+    }));
+
+  const recallItems = input.signals.masteryScores
+    .filter((m) => m.score >= 70)
+    .sort((a, b) => {
+      const aQuiz = quizAvgById.get(a.submissionId) ?? 0;
+      const bQuiz = quizAvgById.get(b.submissionId) ?? 0;
+      return bQuiz - aQuiz;
+    })
+    .slice(0, 5)
+    .map((m, idx) => ({
+      submissionId: m.submissionId,
+      reason: `You previously mastered this area (${Math.round(m.score)}%), and a quick recall pass now helps retain it for long-term memory.`,
+      confidence: 0.62,
+      priority: idx + 1,
+    }));
+
+  const feynmanItems = input.signals.masteryScores
+    .filter((m) => m.score < 60)
+    .sort((a, b) => a.score - b.score)
+    .slice(0, 5)
+    .map((m, idx) => ({
+      submissionId: m.submissionId,
+      reason: `This topic is at ${Math.round(m.score)}% mastery; explaining it in your own words can reveal hidden misconceptions quickly.`,
+      confidence: 0.72,
+      priority: idx + 1,
+    }));
+
+  return {
+    sections: [
+      addSection("continue", continueItems),
+      addSection("next", nextCandidates),
+      addSection("style", styleItems),
+      addSection("recall", recallItems),
+      addSection("feynman", feynmanItems),
+    ],
+    reasoning: `Generated from live student signals and graph data with a deterministic fallback at ${new Date(now).toISOString()} because structured LLM output was unavailable.`,
+  };
+}
+
 /**
  * Run the learning router agent to generate personalized recommendations.
  */
@@ -167,13 +333,10 @@ export async function generateRecommendations(
   input: LearningRouterInput
 ): Promise<RecommendationOutput> {
   const model = getGroqChat({
+    model: "openai/gpt-oss-120b",
     temperature: 0.4,
     maxTokens: 800,
   });
-
-  const structuredModel = model.withStructuredOutput(
-    RecommendationOutputSchema
-  );
 
   const prompt = await LEARNING_ROUTER_PROMPT.formatMessages({
     studentSignals: formatStudentSignals(input.signals),
@@ -183,6 +346,46 @@ export async function generateRecommendations(
     prerequisiteGraph: formatPrerequisiteGraph(input.prerequisiteEdges),
   });
 
-  const result = await structuredModel.invoke(prompt);
-  return result;
+  const functionCallingModel = model.withStructuredOutput(
+    RecommendationOutputSchema,
+    { method: "functionCalling" }
+  );
+
+  try {
+    try {
+      const fcResult = await functionCallingModel.invoke(prompt);
+      return fcResult;
+    } catch {
+      // Fall through to plain-text JSON parsing path.
+    }
+
+    const firstResponse = await model.invoke(prompt);
+    const firstRaw = toTextContent(firstResponse.content);
+    logRawPreview("First model output", firstRaw);
+
+    try {
+      return parseRecommendationOutput(firstRaw);
+    } catch {
+      const repairInstruction = [
+        "Repair your previous response into valid JSON only.",
+        "Do not include markdown or explanation.",
+        "Return exactly one JSON object with keys: sections, reasoning.",
+        "Each section must use sectionType in continue|next|style|recall|feynman and items[] with submissionId, reason, confidence, priority.",
+      ].join(" ");
+
+      const repairMessages = [
+        ...prompt,
+        new AIMessage(firstRaw),
+        new HumanMessage(repairInstruction),
+      ];
+
+      const repairResponse = await model.invoke(repairMessages);
+      const repairRaw = toTextContent(repairResponse.content);
+      logRawPreview("Repair model output", repairRaw);
+      return parseRecommendationOutput(repairRaw);
+    }
+  } catch (error) {
+    console.error("[LearningRouter] Structured output failed, using deterministic fallback:", error);
+    return buildHeuristicRecommendations(input);
+  }
 }

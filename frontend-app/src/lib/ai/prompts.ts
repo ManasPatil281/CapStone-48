@@ -99,7 +99,7 @@ Analyze the student's latest response and determine if misconceptions remain.`
 
 export const LEARNING_ROUTER_PROMPT = ChatPromptTemplate.fromMessages([
   SystemMessagePromptTemplate.fromTemplate(
-    `You are an adaptive learning path advisor. Analyze the student's learning signals and recommend personalized next steps.
+    `You are an adaptive learning path advisor.
 
 Student Learning Signals:
 {studentSignals}
@@ -110,23 +110,58 @@ Available Submissions (with mastery data):
 Prerequisite Graph:
 {prerequisiteGraph}
 
-Based on these signals, recommend items for each section:
-1. "continue" — In-progress modules the student should return to
-2. "next" — New modules to start based on prerequisite mastery
-3. "style" — Modules matching their preferred content style
-4. "recall" — Previously mastered modules due for revision
-5. "feynman" — Low-mastery modules where explanation practice would help
+Required section types:
+- "continue": in-progress modules to revisit
+- "next": new modules based on prerequisite readiness
+- "style": modules aligned to preferred content style
+- "recall": mastered modules due for revision
+- "feynman": low-mastery modules for explanation practice
 
-For each recommendation, provide:
-- The submission ID
-- A brief reason (personalized to this student)
-- Your confidence (0-1)
-- A priority rank (1-5, where 1 is highest)
+Each item must include:
+- submissionId: string
+- reason: concise personalized reason in plain language
+- confidence: number from 0 to 1
+- priority: integer from 1 to 5 (1 is highest)
 
-Also provide brief reasoning explaining your overall recommendation strategy.`
+Return JSON only. Do not include markdown. Do not include prose before or after JSON.
+Use this exact JSON template shape:
+{{
+  "sections": [
+    {{
+      "sectionType": "continue",
+      "items": [
+        {{
+          "submissionId": "sub-123",
+          "reason": "string",
+          "confidence": 0.72,
+          "priority": 1
+        }}
+      ]
+    }},
+    {{
+      "sectionType": "next",
+      "items": []
+    }},
+    {{
+      "sectionType": "style",
+      "items": []
+    }},
+    {{
+      "sectionType": "recall",
+      "items": []
+    }},
+    {{
+      "sectionType": "feynman",
+      "items": []
+    }}
+  ],
+  "reasoning": "One short sentence"
+}}
+
+Important: Output must be valid JSON only, with no markdown or extra text.`
   ),
   HumanMessagePromptTemplate.fromTemplate(
-    "Generate personalized recommendations for this student."
+    "Generate personalized recommendations and return valid JSON only."
   ),
 ]);
 

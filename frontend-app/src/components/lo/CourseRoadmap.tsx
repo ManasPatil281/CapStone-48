@@ -205,8 +205,9 @@ export function CourseRoadmap({ courseSlug = "dsa", nodes, edges, mostTakenPathN
             pannable
             zoomable
             nodeColor={(node) => {
-              const status = (node.data as any)?.status ?? "NOT_STARTED";
-              return statusColorMap[status] ?? "#64748b";
+              const nodeStatus =
+                ((node.data as { status?: RoadmapNode["status"] } | undefined)?.status ?? "NOT_STARTED") as RoadmapNode["status"];
+              return statusColorMap[nodeStatus] ?? "#64748b";
             }}
           />
           <Controls showInteractive={false} />

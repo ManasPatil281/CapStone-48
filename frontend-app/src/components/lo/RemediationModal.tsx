@@ -62,7 +62,7 @@ export function RemediationModal({
               <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
                 Autonomous Remediation Agent
               </h3>
-              <p className="text-xs text-slate-400 mt-0.5">Targeted micro-lesson for "{loTitle}"</p>
+              <p className="text-xs text-slate-400 mt-0.5">Targeted micro-lesson for {loTitle}</p>
             </div>
           </div>
 
@@ -79,7 +79,7 @@ export function RemediationModal({
           {!lesson && !isLoading && (
             <div className="text-center py-10 space-y-5">
               <p className="text-sm text-slate-300 max-w-md mx-auto leading-relaxed">
-                Our AI agent has detected a learning gap on <strong>{loTitle}</strong>. Would you like a personalized 3-card micro-lesson to fix this misconception?
+                Our AI agent has detected a learning gap on <strong>{loTitle}</strong>. Would you like a personalized 3-card micro-lesson to fix this gap?
               </p>
               <Button
                 onClick={fetchLesson}

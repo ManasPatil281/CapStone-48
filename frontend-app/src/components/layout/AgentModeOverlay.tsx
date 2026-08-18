@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import type { Route } from "next";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Sparkles,
@@ -39,7 +40,7 @@ export function AgentModeOverlay() {
     {
       id: "welcome",
       role: "agent",
-      text: "🤖 **Agent Mode Active**. I am your platform co-pilot.\n\nI monitor your progress, auto-navigate courses, run multi-agent debates, and generate instant micro-lessons.",
+      text: "🤖 **Agent Mode Active**. I am your learning co-pilot.\n\nI can explain what the platform is doing, recommend the next step, and point out the reason behind each suggestion using your progress, quiz results, and study patterns.",
     },
   ]);
   const [input, setInput] = useState("");
@@ -84,7 +85,7 @@ export function AgentModeOverlay() {
           {
             id: crypto.randomUUID(),
             role: "agent",
-            text: "Navigating to your AI Recommendations page...",
+            text: "I found a learning recommendation flow for you and I am opening the page where the system explains why each suggestion is useful.",
             action: { type: "navigate", target: "/recommendations", label: "Open Recommendations" },
           },
         ]);
@@ -95,7 +96,7 @@ export function AgentModeOverlay() {
           {
             id: crypto.randomUUID(),
             role: "agent",
-            text: "Opening DSA Course page...",
+            text: "I am opening the course view so you can see the learning path and skill progression in context.",
             action: { type: "navigate", target: "/courses/dsa", label: "Go to DSA Course" },
           },
         ]);
@@ -106,7 +107,7 @@ export function AgentModeOverlay() {
           {
             id: crypto.randomUUID(),
             role: "agent",
-            text: "Opening Teacher Analytics Agent interface...",
+            text: "I am opening the analytics view so you can see how the teacher-side signals and recommendations are being interpreted.",
             action: { type: "navigate", target: "/teacher", label: "Go to Teacher Dashboard" },
           },
         ]);
@@ -196,9 +197,9 @@ export function AgentModeOverlay() {
               </div>
               <div>
                 <h3 className="text-sm font-bold text-slate-100 uppercase tracking-widest">
-                  Agent Co-pilot
+                  Learning Co-pilot
                 </h3>
-                <p className="text-[11px] text-slate-400 truncate max-w-[200px]">Context: {pathname}</p>
+                <p className="text-[11px] text-slate-400 truncate max-w-[200px]">Current page: {pathname}</p>
               </div>
             </div>
 
@@ -274,7 +275,7 @@ export function AgentModeOverlay() {
                   <Button
                     size="sm"
                     className="mt-3 text-[11px] font-bold border-emerald-500/50 text-emerald-100 hover:bg-emerald-500/20 bg-emerald-500/10"
-                    onClick={() => m.action?.target && router.push(m.action.target)}
+                    onClick={() => m.action?.target && router.push(m.action.target as Route)}
                   >
                     {m.action.label || "Take Action"}
                     <ChevronRight className="ml-1.5 h-3.5 w-3.5" />
@@ -286,7 +287,7 @@ export function AgentModeOverlay() {
             {isLoading && (
               <div className="flex items-center gap-3 rounded-2xl bg-slate-800/50 border border-slate-700 p-4 text-slate-300 text-sm shadow-sm animate-pulse">
                 <Loader2 className="h-4 w-4 animate-spin text-emerald-400" />
-                <span className="font-medium">Agent reasoning across system state...</span>
+                <span className="font-medium">The agent is checking your learning signals and preparing a simple explanation...</span>
               </div>
             )}
           </div>

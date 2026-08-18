@@ -135,7 +135,7 @@ export function CourseAuthoringAgentPanel() {
           </div>
 
           <div className="flex justify-between items-center text-slate-400 text-sm p-4 bg-slate-950/30 rounded-xl border border-slate-800">
-            <span>Successfully generated {pkg.quizQuestions.length} Bloom's taxonomy questions, notes, and code.</span>
+            <span>Successfully generated {pkg.quizQuestions.length} Bloom&apos;s taxonomy questions, notes, and code.</span>
             <Button className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold">
               <CheckCircle className="mr-2 h-4 w-4" /> Save to Drafts
             </Button>

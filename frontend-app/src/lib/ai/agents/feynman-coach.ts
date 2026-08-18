@@ -36,19 +36,38 @@ const FeynmanStateAnnotation = Annotation.Root({
     reducer: (curr, update) => [...curr, ...update],
     default: () => [],
   }),
-  currentScore: Annotation<number>({ default: () => 0 }),
-  feedback: Annotation<string>({ default: () => "" }),
+  currentScore: Annotation<number>({
+    reducer: (curr, update) => update ?? curr,
+    default: () => 0,
+  }),
+  feedback: Annotation<string>({
+    reducer: (curr, update) => update ?? curr,
+    default: () => "",
+  }),
   misconceptions: Annotation<string[]>({
     reducer: (curr, update) => [...curr, ...update],
     default: () => [],
   }),
-  followUpQuestion: Annotation<string>({ default: () => "" }),
-  followUpCount: Annotation<number>({ default: () => 0 }),
-  maxFollowUps: Annotation<number>({ default: () => 2 }),
+  followUpQuestion: Annotation<string>({
+    reducer: (curr, update) => update ?? curr,
+    default: () => "",
+  }),
+  followUpCount: Annotation<number>({
+    reducer: (curr, update) => update ?? curr,
+    default: () => 0,
+  }),
+  maxFollowUps: Annotation<number>({
+    reducer: (curr, update) => update ?? curr,
+    default: () => 2,
+  }),
   phase: Annotation<"evaluate" | "followup" | "final">({
+    reducer: (curr, update) => update ?? curr,
     default: () => "evaluate",
   }),
-  studentResponse: Annotation<string>({ default: () => "" }),
+  studentResponse: Annotation<string>({
+    reducer: (curr, update) => update ?? curr,
+    default: () => "",
+  }),
 });
 
 type FeynmanState = typeof FeynmanStateAnnotation.State;
