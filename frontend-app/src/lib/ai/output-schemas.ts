@@ -108,3 +108,120 @@ export const InterventionSchema = z.object({
 });
 
 export type Intervention = z.infer<typeof InterventionSchema>;
+
+/* ── Roadblock diagnosis ──────────────────────────────────────────────── */
+
+/**
+ * Bounded diagnosis categories for the diagnostic agent
+ * (src/lib/ai/agents/diagnostic-agent.ts).
+ *
+ * NO_ROADBLOCK_DETECTED is never chosen by the LLM itself — it is only
+ * returned by the deterministic short-circuit when RoadblockEvidence found
+ * no signals at all, to distinguish "checked, looks healthy" from
+ * INSUFFICIENT_EVIDENCE ("data exists but is too sparse/conflicting to
+ * conclude either way").
+ */
+export const DiagnosisTypeEnum = z.enum([
+  "CONCEPTUAL_DIFFICULTY",
+  "PREREQUISITE_GAP",
+  "RETENTION_DIFFICULTY",
+  "ENGAGEMENT_DIFFICULTY",
+  "ASSESSMENT_DIFFICULTY",
+  "SUBMISSION_SPECIFIC_DIFFICULTY",
+  "INSUFFICIENT_EVIDENCE",
+  "NO_ROADBLOCK_DETECTED",
+]);
+
+export const DiagnosisSchema = z.object({
+  hasRoadblock: z.boolean().describe("Whether the evidence supports a likely learning roadblock"),
+  diagnosisType: DiagnosisTypeEnum.describe("The single best-fitting bounded diagnosis category"),
+  primaryDiagnosis: z
+    .string()
+    .max(300)
+    .describe("One-sentence plain-language summary of the most likely reason for struggle"),
+  explanation: z
+    .string()
+    .max(800)
+    .describe("A short explanation grounded only in the supplied evidence, distinguishing observation from inference"),
+  evidence: z
+    .array(z.string().max(200))
+    .max(8)
+    .describe("Concrete facts drawn directly from the supplied evidence, not invented"),
+  possibleWeakConcepts: z
+    .array(z.string().max(100))
+    .max(5)
+    .describe("Optional, clearly inferential list of concepts that may be weak; empty if not supported by evidence"),
+  confidence: z
+    .number()
+    .min(0)
+    .max(1)
+    .describe("Confidence 0-1; must be lowered by missing, conflicting, or thin evidence"),
+  evidenceLimitations: z
+    .array(z.string().max(200))
+    .max(8)
+    .describe("Which evidence categories were unavailable or insufficient for this diagnosis"),
+});
+
+export type Diagnosis = z.infer<typeof DiagnosisSchema>;
+
+/* ── Pedagogical planner ──────────────────────────────────────────────── */
+
+/**
+ * Bounded next-action set for the pedagogical planner
+ * (src/lib/ai/agents/pedagogical-planner.ts). Sits above specialist agents
+ * as the orchestration/decision layer; it does not execute the action.
+ */
+export const PlannerActionEnum = z.enum([
+  "ADVANCE",
+  "CONTINUE",
+  "REMEDIATE",
+  "REVISIT_PREREQUISITE",
+  "TRY_DIFFERENT_METHOD",
+  "ACTIVE_RECALL",
+  "FEYNMAN_CHECK",
+  "PRACTISE",
+  "NO_ACTION",
+]);
+
+export const PedagogicalPlanSchema = z.object({
+  action: PlannerActionEnum.describe("The single best next pedagogical action"),
+  targetLoId: z
+    .string()
+    .nullable()
+    .describe(
+      "Required for ADVANCE (a postrequisite LO) or REVISIT_PREREQUISITE (a prerequisite LO); must be one of the ids explicitly listed in the available targets, otherwise null"
+    ),
+  targetSubmissionId: z
+    .string()
+    .nullable()
+    .describe(
+      "Optional specific submission within targetLoId, or an alternative submission of the current LO for TRY_DIFFERENT_METHOD; must be one of the ids explicitly listed, otherwise null"
+    ),
+  targetDeliveryTypeId: z
+    .string()
+    .nullable()
+    .describe(
+      "Optional delivery type to try, only meaningful for TRY_DIFFERENT_METHOD; must be one of the ids explicitly listed, otherwise null"
+    ),
+  reason: z.string().max(400).describe("Plain-language reason grounded in the supplied evidence/diagnosis"),
+  confidence: z
+    .number()
+    .min(0)
+    .max(1)
+    .describe("Confidence 0-1; must be lowered by missing, conflicting, or thin evidence"),
+  supportingSignals: z
+    .array(z.string().max(80))
+    .max(8)
+    .describe("RoadblockEvidence signal types or diagnosis fields that support this action"),
+  alternativesConsidered: z
+    .array(
+      z.object({
+        action: PlannerActionEnum,
+        reasonNotChosen: z.string().max(200),
+      })
+    )
+    .max(4)
+    .describe("Other actions considered and why they were not chosen"),
+});
+
+export type PedagogicalPlan = z.infer<typeof PedagogicalPlanSchema>;
