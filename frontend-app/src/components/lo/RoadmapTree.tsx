@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Route } from "next";
 import type { NodeMouseHandler, ReactFlowInstance } from "reactflow";
+import { GraduationCap } from "lucide-react";
 
 export type RoadmapNode = {
   id: string;
@@ -14,6 +15,15 @@ export type RoadmapNode = {
   status: "NOT_STARTED" | "IN_PROGRESS" | "COMPLETED" | "MASTERED";
   difficulty: number;
   estimatedTime: number;
+  /**
+   * Omitted/undefined = ordinary LO node (default, unchanged rendering).
+   * "COURSE_PREREQUISITE" = an entire course recommended as background for
+   * the adjacent LO — advisory only, never a completion gate. For these
+   * nodes, `id` is namespaced as `course:${courseId}` (never collides with
+   * an LO id) and `slug` holds the target COURSE's slug, used for node
+   * click navigation instead of `?lo=`.
+   */
+  kind?: "COURSE_PREREQUISITE";
 };
 
 export type RoadmapEdge = {
@@ -37,6 +47,9 @@ const statusColorMap: Record<RoadmapNode["status"], string> = {
 };
 
 const mostTakenPathColor = "#fbbf24"; // Amber/gold
+// Course-prerequisite accent — same saturation level as the status colors
+// above (not a brighter/neon outlier), reserved exclusively for this node kind.
+const coursePrerequisiteAccent = "#8b5cf6";
 
 const COLUMN_X = {
   left: 80,
@@ -112,21 +125,29 @@ export function RoadmapTree({ nodes, edges, mostTakenPathNodeIds = [], currentNo
         const isCurrent = node.id === resolvedCurrentNodeId;
         const position = flowPositionMap.get(node.id) ?? { x: COLUMN_X.center, y: TOP_PADDING };
 
+        const isCoursePrereq = node.kind === "COURSE_PREREQUISITE";
+
         return {
           id: node.id,
-          data: { label: NodeContent(node), status: node.status, isOnPath, slug: node.slug },
+          data: { label: NodeContent(node), status: node.status, isOnPath, slug: node.slug, kind: node.kind },
           position,
           sourcePosition: Position.Right,
           targetPosition: Position.Left,
           style: {
-            background: "#0f172a",
-            border: `3px solid ${isOnPath ? mostTakenPathColor : baseColor}`,
+            // Same base card fill as an ordinary node, with only the
+            // faintest violet cast — the accent lives in the border/badge,
+            // not the fill, so the node still reads as "part of the roadmap."
+            background: isCoursePrereq ? "#13112a" : "#0f172a",
+            border: isCoursePrereq ? `3px solid ${coursePrerequisiteAccent}` : `3px solid ${isOnPath ? mostTakenPathColor : baseColor}`,
             borderRadius: 20,
             padding: 12,
             color: "white",
             boxShadow: isOnPath ? `0 0 15px ${mostTakenPathColor}70` : "none",
             fontWeight: isCurrent ? "700" : "500",
             minWidth: "180px",
+            maxWidth: isCoursePrereq ? "220px" : undefined,
+            whiteSpace: isCoursePrereq ? ("normal" as const) : undefined,
+            wordBreak: isCoursePrereq ? ("break-word" as const) : undefined,
             textAlign: "center" as const,
             cursor: courseSlug ? "pointer" : "default"
           }
@@ -162,6 +183,11 @@ export function RoadmapTree({ nodes, edges, mostTakenPathNodeIds = [], currentNo
   }, [flowEdges, flowNodes, rfInstance]);
 
   const handleNodeClick = useCallback<NodeMouseHandler>((_, node) => {
+    const data = node.data as { kind?: RoadmapNode["kind"]; slug?: string } | undefined;
+    if (data?.kind === "COURSE_PREREQUISITE") {
+      if (data.slug) router.push(`/courses/${data.slug}` as Route);
+      return;
+    }
     if (!courseSlug) return;
     router.push(`/courses/${courseSlug}?lo=${node.id}` as Route);
   }, [courseSlug, router]);
@@ -200,6 +226,18 @@ export function RoadmapTree({ nodes, edges, mostTakenPathNodeIds = [], currentNo
 }
 
 function NodeContent(node: RoadmapNode) {
+  if (node.kind === "COURSE_PREREQUISITE") {
+    return (
+      <div className="flex flex-col items-center gap-1">
+        <p className="text-sm font-semibold leading-snug">{node.title}</p>
+        <p className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-violet-300">
+          <GraduationCap className="h-3 w-3" />
+          Course prerequisite
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-1">
       <p className="text-sm font-semibold">{node.title}</p>

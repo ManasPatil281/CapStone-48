@@ -646,6 +646,92 @@ or prerequisite routing yet. `mastery` (submission-level, for the requested
 submission) and `loMastery` (LO-level aggregate) are both present on the
 state and must not be confused with each other.
 
+### Course-level prerequisites (implemented)
+
+In addition to LO-to-LO prerequisite edges (`teacher_lo_submission_edge`), a
+teacher submission may declare an entire **course** as recommended
+background via `teacher_lo_submission_course_prerequisite` (submission-
+scoped, additive table — see `DATABASE_AND_DATA_FLOW.md` §5). This is a
+distinct dependency type from an LO prerequisite, both in the data model and
+in meaning:
+
+> "This LO assumes background knowledge from this course" — not "the
+> student must complete this course first."
+
+**Semantics (advisory, never a gate):**
+
+-   never blocks access to the target LO/submission;
+-   never requires completing or mastering any LO in the prerequisite
+    course;
+-   no course-level mastery score is computed, stored, or invented anywhere
+    in this feature — course prerequisites are exposed as plain facts
+    (`courseId`, `title`, `slug`) only.
+
+**`StudentLearningState.prerequisites.coursePrerequisites`** — a new
+sibling field next to `submissionScoped`/`prerequisiteDetails`, populated by
+one additional submission-scoped query in `studentLearningState.ts` (same
+`submission_id` scoping convention as the existing prerequisite/postrequisite
+edge query). Facts only, per the constraint above: no mastery join, no
+aggregation. `/debug/learning-state` renders it both as an explicit list and
+inside the full raw-state JSON dump.
+
+**Roadmap rendering.** `RoadmapNode` gained an optional `kind?:
+"COURSE_PREREQUISITE"` field (omitted = ordinary LO node, so every existing
+node-construction call site needed zero changes). A course-prerequisite node
+uses a namespaced id (`course:${courseId}`) to guarantee it can never collide
+with an LO id, a dashed violet border instead of the normal status-colored
+border, a "🎓 Course prerequisite" badge instead of difficulty/time, and
+clicking it navigates to `/courses/{courseSlug}` instead of `?lo=`
+(`RoadmapTree.tsx` and `CourseRoadmap.tsx` both updated identically).
+
+Course-prerequisite nodes/edges are added in three places, all following the
+project's existing submission-scoped-vs-aggregated distinction:
+
+-   **Module/submission roadmap**
+    (`courses/[courseSlug]/submission/[submissionId]/page.tsx`'s
+    `buildRoadmap()`): strictly submission-scoped — only shows a course
+    prerequisite when *this exact submission* declared it, exactly mirroring
+    how its LO prerequisite/postrequisite query is already scoped. Not added
+    to `courses/dsa/[loSlug]/page.tsx`'s own "module roadmap" section
+    (labeled "MASTER GRAPH" in code), because that section aggregates across
+    *all* approved submissions of the LO rather than representing one
+    specific submission — adding a submission-scoped course prerequisite
+    there would misattribute one teacher's assertion as a property of the LO
+    itself, which is exactly the failure mode this task was told to avoid.
+-   **Course/global roadmap** (all three sites that build this: `courses/
+    [courseSlug]/page.tsx`, `courses/dsa/[loSlug]/page.tsx`'s
+    `courseRoadmapData` section, and `courses/[courseSlug]/submission/
+    [submissionId]/page.tsx`'s `courseRoadmapData` section): aggregates
+    course prerequisites the same way LO-to-LO edges are already aggregated
+    there — any `status = "approved"` submission of an LO in the course may
+    contribute a course-prerequisite node, deduplicated by
+    `(prerequisiteCourseId, targetLoId)`. This is an aggregated
+    *visualisation* of still-submission-scoped relationships, not a claim
+    that a relationship is a universal curriculum fact — consistent with how
+    the existing course roadmap already treats LO-to-LO edges.
+
+**Teacher authoring** (`SubmissionForm.tsx`): a new "Course prerequisites"
+checkbox list sits inside the existing "Prerequisites" card, alongside the
+existing LO checkboxes (relabelled "Learning object prerequisites" for
+clarity) — reusing the `courses` list already loaded for the submission's
+own course dropdown, excluding the submission's own course (rejected as a
+self-reference, same convention as the existing LO self-edge rejection).
+On submit, existing course-prerequisite rows for the submission are deleted
+and current selections freshly inserted — same delete-then-reinsert pattern
+already used for `teacher_lo_submission_edge`, safe for the same reason (no
+historical/tracking table references this row).
+
+**Diagnostic/planner implications (explicitly deferred).** Neither
+`RoadblockEvidence` nor the Diagnostic Agent nor the Pedagogical Planner
+reads `coursePrerequisites` in this implementation — a course prerequisite
+alone must never trigger `PREREQUISITE_LOW_MASTERY` or any other signal.
+Documented future direction only: if a student struggles, a later layer
+could inspect this student's existing per-LO mastery evidence for LOs inside
+the declared prerequisite course (not a new course-level score — the same
+`prerequisiteDetails`-style per-submission evidence pattern already used for
+LO prerequisites) as one additional diagnostic input. This is not
+implemented and requires its own explicit approval before being added.
+
 ### Roadblock Evidence extraction (deterministic, first layer only)
 
 `src/lib/adaptive/roadblockEvidence.ts` — `extractRoadblockEvidence(state: StudentLearningState): RoadblockEvidence`

@@ -25,6 +25,7 @@ export type TeacherSubmissionContent = Tables["teacher_lo_submission_content"]["
   is_active?: boolean;
 };
 export type TeacherSubmissionEdge = Tables["teacher_lo_submission_edge"]["Row"];
+export type TeacherSubmissionCoursePrerequisite = Tables["teacher_lo_submission_course_prerequisite"]["Row"];
 export type TeacherSubmissionAssessment = Tables["teacher_lo_submission_assessment"]["Row"];
 export type TeacherSubmissionQuestion = Tables["teacher_lo_submission_question"]["Row"] & {
   options?: TeacherSubmissionQuestionOption[];

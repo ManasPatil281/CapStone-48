@@ -97,7 +97,11 @@ Teachers can:
 -   create and edit LO submissions;
 -   select pedagogical delivery types;
 -   define prerequisite and postrequisite relationships for a
-    submission;
+    submission, at both LO level (`teacher_lo_submission_edge`) and course
+    level (`teacher_lo_submission_course_prerequisite` — an entire course
+    recommended as background, advisory only, never a completion gate; see
+    `DATABASE_AND_DATA_FLOW.md` §5 and
+    `ADAPTIVE_AND_AGENTIC_ARCHITECTURE.md` §17);
 -   create assessments;
 -   view their submissions;
 -   view student/course analytics;

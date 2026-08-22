@@ -88,6 +88,7 @@ Important curriculum deletion behaviour includes:
 - `teacher_lo_submission → learning_object`: `ON DELETE CASCADE`
 - `teacher_lo_submission → teacher/user_profile`: `ON DELETE CASCADE`
 - assessment/content/edge/question/option child relationships use `ON DELETE CASCADE` as listed in the live FK inspection.
+- `teacher_lo_submission_course_prerequisite → teacher_lo_submission/course`: `ON DELETE CASCADE` (both directions), added for course-level prerequisites — see §5.
 
 ### Row-level security
 
@@ -305,6 +306,27 @@ Live index inspection confirms the unique index:
 This is the required submission-scoped rule.
 
 Do not replace it with global uniqueness on `(source_lo_id, target_lo_id)` because that would break submission-specific module-roadmap ownership.
+
+### `teacher_lo_submission_course_prerequisite` (implemented)
+
+Purpose: an entire COURSE recommended as background for a submission's LO — distinct from, and additive to, `teacher_lo_submission_edge`'s LO-to-LO prerequisite edges. Advisory only: **never** a completion gate, never requires mastering the prerequisite course, never blocks access to the target LO.
+
+Columns:
+
+- `id uuid` PK
+- `submission_id uuid` FK → `teacher_lo_submission.id`, `ON DELETE CASCADE`
+- `prerequisite_course_id uuid` FK → `course.id`, `ON DELETE CASCADE`
+- `created_at timestamptz` default `now()`
+
+Unique constraint: `(submission_id, prerequisite_course_id)`.
+
+Semantics:
+
+- **Submission-scoped**, exactly like `teacher_lo_submission_edge` — a course prerequisite is declared per teacher submission, not per LO globally. Multiple submissions of the same LO may declare different (or no) course prerequisites.
+- No `target_lo_id` column: unlike the bidirectional `teacher_lo_submission_edge`, a course is only ever a prerequisite here, never a postrequisite, so the target LO is always implicitly the declaring submission's own `learning_object_id`.
+- No historical/tracking table references this row (advisory metadata only), so `ON DELETE CASCADE` in both directions is safe — the same reasoning that already applies to `teacher_lo_submission_edge`.
+- Self-reference (a submission's own course as its own prerequisite) is rejected at the application layer, not via a DB constraint — same convention as the existing self-edge rejection for LO prerequisites.
+- No course-level mastery is computed or stored anywhere for this relationship. `StudentLearningState.prerequisites.coursePrerequisites` exposes only the factual `{courseId, title, slug}` — see `ADAPTIVE_AND_AGENTIC_ARCHITECTURE.md`.
 
 ## 6. Assessment / quiz tables
 
@@ -563,7 +585,8 @@ High-level flow:
 5. creates content rows;
 6. creates/reuses assessment and questions/options if quiz exists;
 7. creates submission-scoped prerequisite/postrequisite edges;
-8. submission becomes available to student flow according to current approval convention.
+8. creates submission-scoped course prerequisites (`teacher_lo_submission_course_prerequisite`, advisory-only, see §5);
+9. submission becomes available to student flow according to current approval convention.
 
 Because creation spans multiple dependent operations, duplicate-submit protection is important.
 
@@ -579,7 +602,8 @@ High-level safe flow:
 6. inactivate removed content where tracking history must survive;
 7. update/reconcile quiz assessment/questions;
 8. replace/reconcile this submission's edges;
-9. preserve historical student tracking.
+9. replace/reconcile this submission's course prerequisites (same delete-then-reinsert pattern as edges — safe because this row has no historical/tracking dependents);
+10. preserve historical student tracking.
 
 Do not revert to "delete all dependents then reinsert" for tracked entities.
 

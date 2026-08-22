@@ -157,6 +157,20 @@ export interface StudentLearningState {
         level: MasteryLevel | null;
       }>;
     }>;
+    /**
+     * Entire courses this submission's teacher declared as recommended
+     * background (teacher_lo_submission_course_prerequisite), submission-
+     * scoped exactly like submissionScoped above. Advisory only — never a
+     * completion gate, and NOT the same as a prerequisite LO. Facts only:
+     * no course-level mastery is computed or invented here. A future
+     * diagnostic/planner layer may inspect evidence from LOs inside this
+     * course, but that is not implemented by this builder.
+     */
+    coursePrerequisites: Array<{
+      courseId: string;
+      title: string | null;
+      slug: string | null;
+    }>;
   };
 
   revision: {
@@ -700,6 +714,34 @@ export async function buildStudentLearningState(
     }
   }
 
+  // --- Course prerequisites (submission-scoped, advisory background courses) ---
+  // Facts only: no course-level mastery is computed here, per the same
+  // caution as loMastery/prerequisiteDetails above about inventing
+  // aggregation rules that haven't been explicitly approved.
+  const coursePrerequisites: StudentLearningState["prerequisites"]["coursePrerequisites"] = [];
+  const { data: coursePrereqRows, error: coursePrereqErr } = await supabaseAny
+    .from("teacher_lo_submission_course_prerequisite")
+    .select("prerequisite_course_id")
+    .eq("submission_id", submissionId);
+  if (coursePrereqErr) {
+    console.error("[buildStudentLearningState] Failed to load course prerequisites:", coursePrereqErr);
+  }
+  const prerequisiteCourseIds = uniqueStrings(
+    ((coursePrereqRows ?? []) as Array<{ prerequisite_course_id: string | null }>).map((r) => r.prerequisite_course_id)
+  );
+  if (prerequisiteCourseIds.length > 0) {
+    const { data: courseRows, error: courseErr } = await supabaseAny
+      .from("course")
+      .select("id, title, slug")
+      .in("id", prerequisiteCourseIds);
+    if (courseErr) {
+      console.error("[buildStudentLearningState] Failed to load prerequisite course details:", courseErr);
+    }
+    ((courseRows ?? []) as Array<{ id: string; title: string | null; slug: string | null }>).forEach((r) => {
+      coursePrerequisites.push({ courseId: r.id, title: r.title, slug: r.slug });
+    });
+  }
+
   // --- Revision / active recall (this submission only, mirrors recommendations page rule) ---
   const thresholdMs = Date.now() - ACTIVE_RECALL_DAYS * 24 * 60 * 60 * 1000;
   const activeRecallEligible =
@@ -726,6 +768,7 @@ export async function buildStudentLearningState(
     prerequisites: {
       submissionScoped: { prerequisiteLoIds, postrequisiteLoIds },
       prerequisiteDetails,
+      coursePrerequisites,
     },
     revision: {
       activeRecallEligible,

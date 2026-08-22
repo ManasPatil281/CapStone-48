@@ -145,7 +145,7 @@ export default async function EditSubmissionPage({ params }: EditPageProps) {
     notFound();
   }
 
-  const [contentRes, edgeRes, assessmentRes, quizDeliveryTypeRes] = await Promise.all([
+  const [contentRes, edgeRes, coursePrereqRes, assessmentRes, quizDeliveryTypeRes] = await Promise.all([
     supabaseAny
       .from("teacher_lo_submission_content")
       .select("id, delivery_type_id, title, content_json, sequence_order, recommended_time_seconds, delivery_type:delivery_type_id(code)")
@@ -154,6 +154,10 @@ export default async function EditSubmissionPage({ params }: EditPageProps) {
     supabaseAny
       .from("teacher_lo_submission_edge")
       .select("source_lo_id, target_lo_id")
+      .eq("submission_id", submissionRow.id),
+    supabaseAny
+      .from("teacher_lo_submission_course_prerequisite")
+      .select("prerequisite_course_id")
       .eq("submission_id", submissionRow.id),
     supabaseAny
       .from("teacher_lo_submission_assessment")
@@ -168,6 +172,10 @@ export default async function EditSubmissionPage({ params }: EditPageProps) {
 
   if (edgeRes.error) {
     console.error("[EditSubmissionPage] Failed to load submission edges:", edgeRes.error);
+  }
+
+  if (coursePrereqRes.error) {
+    console.error("[EditSubmissionPage] Failed to load course prerequisites:", coursePrereqRes.error);
   }
 
   if (assessmentRes.error) {
@@ -266,6 +274,10 @@ export default async function EditSubmissionPage({ params }: EditPageProps) {
     .filter((edge) => edge.source_lo_id === selectedLoId)
     .map((edge) => edge.target_lo_id);
 
+  const coursePrerequisiteIds = ((coursePrereqRes.data ?? []) as Array<{ prerequisite_course_id: string }>).map(
+    (row) => row.prerequisite_course_id
+  );
+
   const contentRows = (contentRes.data ?? []) as any[];
 
   const contentItems: ContentItem[] = contentRows.map((row: any) =>
@@ -325,6 +337,7 @@ export default async function EditSubmissionPage({ params }: EditPageProps) {
     notes: submissionRow.notes ?? "",
     prerequisites,
     postrequisites,
+    coursePrerequisiteIds,
     contentItems,
   };
 

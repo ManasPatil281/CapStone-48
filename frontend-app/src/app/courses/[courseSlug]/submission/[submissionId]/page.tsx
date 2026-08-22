@@ -108,7 +108,7 @@ export default async function SubmissionDetailPage({ params }: PageProps) {
   // Module roadmap edges are submission-scoped: only edges stored against THIS
   // submission are shown in the module roadmap.  The course roadmap (separate
   // query further down) aggregates globally across all approved submissions.
-  const [prerequisiteEdgesRes, dependentEdgesRes, submissionAssessmentRes] = await Promise.all([
+  const [prerequisiteEdgesRes, dependentEdgesRes, coursePrerequisiteRes, submissionAssessmentRes] = await Promise.all([
     supabase
       .from("teacher_lo_submission_edge")
       .select("source_lo_id")
@@ -119,6 +119,13 @@ export default async function SubmissionDetailPage({ params }: PageProps) {
       .select("target_lo_id")
       .eq("submission_id", submission.id)
       .eq("source_lo_id", lo.id),
+    // Course prerequisites are submission-scoped too, same rationale as the
+    // LO edges above: only THIS submission's declared prerequisite courses
+    // are shown in its module roadmap.
+    (supabase as any)
+      .from("teacher_lo_submission_course_prerequisite")
+      .select("prerequisite_course_id")
+      .eq("submission_id", submission.id),
     supabase
       .from("teacher_lo_submission_assessment")
       .select("id, title, pass_percentage, max_attempts, randomization_mode, sample_percentage, created_at")
@@ -131,6 +138,9 @@ export default async function SubmissionDetailPage({ params }: PageProps) {
   }
   if (dependentEdgesRes.error) {
     console.error("[SubmissionDetailPage] Failed to fetch dependent edges:", dependentEdgesRes.error);
+  }
+  if (coursePrerequisiteRes.error) {
+    console.error("[SubmissionDetailPage] Failed to fetch course prerequisites:", coursePrerequisiteRes.error);
   }
 
   if (submissionAssessmentRes.error) {
@@ -203,11 +213,19 @@ export default async function SubmissionDetailPage({ params }: PageProps) {
 
   const prerequisiteLoIds = Array.from(new Set((prerequisiteEdgesRes.data ?? []).map((edge: any) => edge.source_lo_id).filter(Boolean)));
   const dependentLoIds = Array.from(new Set((dependentEdgesRes.data ?? []).map((edge: any) => edge.target_lo_id).filter(Boolean)));
+  const prerequisiteCourseIds = Array.from(
+    new Set((coursePrerequisiteRes.data ?? []).map((row: any) => row.prerequisite_course_id).filter(Boolean))
+  );
 
-  const [prereqLosRes, dependentLosRes] = await Promise.all([
+  const [prereqLosRes, dependentLosRes, prerequisiteCoursesRes] = await Promise.all([
     prerequisiteLoIds.length > 0 ? supabase.from("learning_object").select("*").in("id", prerequisiteLoIds) : Promise.resolve({ data: [], error: null }),
-    dependentLoIds.length > 0 ? supabase.from("learning_object").select("*").in("id", dependentLoIds) : Promise.resolve({ data: [], error: null })
+    dependentLoIds.length > 0 ? supabase.from("learning_object").select("*").in("id", dependentLoIds) : Promise.resolve({ data: [], error: null }),
+    prerequisiteCourseIds.length > 0
+      ? supabase.from("course").select("id, title, slug").in("id", prerequisiteCourseIds)
+      : Promise.resolve({ data: [], error: null })
   ]);
+
+  const prerequisiteCourses = (prerequisiteCoursesRes.data as Array<{ id: string; title: string; slug: string }> | null) ?? [];
 
   const loDetail: LearningObjectDetail = {
     ...lo,
@@ -241,6 +259,7 @@ export default async function SubmissionDetailPage({ params }: PageProps) {
     lo: loDetail,
     prerequisites: loDetail.prerequisites,
     dependents: loDetail.dependents,
+    prerequisiteCourses,
     progressMap
   });
 
@@ -261,14 +280,23 @@ export default async function SubmissionDetailPage({ params }: PageProps) {
   let courseRoadmapData: { nodes: RoadmapNode[]; edges: RoadmapEdge[]; mostTakenPathNodeIds?: string[]; nodeVisitCounts?: Record<string, number> } | undefined;
 
   if (courseLoIds.length > 0) {
-    const [courseLearningObjectsRes, approvedEdgesRes] = await Promise.all([
+    const [courseLearningObjectsRes, approvedEdgesRes, approvedCoursePrereqRes] = await Promise.all([
       supabase.from("learning_object").select("*").in("id", courseLoIds),
       supabase
         .from("teacher_lo_submission_edge")
         .select("source_lo_id, target_lo_id, teacher_lo_submission!inner(status)")
         .eq("teacher_lo_submission.status", "approved")
         .in("source_lo_id", courseLoIds)
-        .in("target_lo_id", courseLoIds)
+        .in("target_lo_id", courseLoIds),
+      // Aggregated the same way the LO-LO edges above are: any approved
+      // submission of an LO in this course may declare a course prerequisite.
+      // This is a visualisation of submission-scoped relationships, not a
+      // claim that every submission of that LO shares the same prerequisite.
+      (supabase as any)
+        .from("teacher_lo_submission_course_prerequisite")
+        .select("prerequisite_course_id, teacher_lo_submission!inner(learning_object_id, status)")
+        .eq("teacher_lo_submission.status", "approved")
+        .in("teacher_lo_submission.learning_object_id", courseLoIds)
     ]);
 
     const courseLearningObjects = (courseLearningObjectsRes.data as LearningObject[] | null) ?? [];
@@ -296,7 +324,45 @@ export default async function SubmissionDetailPage({ params }: PageProps) {
       }
     });
 
+    // Deduplicate (prerequisite course -> target LO) pairs across submissions.
+    const coursePrereqPairs = new Map<string, { courseId: string; loId: string }>();
+    (approvedCoursePrereqRes.data ?? []).forEach((row: any) => {
+      const prerequisiteCourseId = row.prerequisite_course_id as string;
+      const targetLoId = row.teacher_lo_submission?.learning_object_id as string | undefined;
+      if (!prerequisiteCourseId || !targetLoId || !courseLoIdSet.has(targetLoId)) return;
+      const key = `${prerequisiteCourseId}->${targetLoId}`;
+      if (!coursePrereqPairs.has(key)) {
+        coursePrereqPairs.set(key, { courseId: prerequisiteCourseId, loId: targetLoId });
+      }
+    });
+
+    const prerequisiteCourseIds = Array.from(new Set([...coursePrereqPairs.values()].map((pair) => pair.courseId)));
+    const { data: prerequisiteCourseRows } = prerequisiteCourseIds.length > 0
+      ? await supabase.from("course").select("id, title, slug").in("id", prerequisiteCourseIds)
+      : { data: [] };
+
+    const prerequisiteCourseById = new Map(
+      ((prerequisiteCourseRows as Array<{ id: string; title: string; slug: string }> | null) ?? []).map((c) => [c.id, c])
+    );
+
+    prerequisiteCourseById.forEach((course) => {
+      nodes.push({
+        id: `course:${course.id}`,
+        slug: course.slug,
+        title: course.title,
+        difficulty: 0,
+        estimatedTime: 0,
+        status: "NOT_STARTED",
+        kind: "COURSE_PREREQUISITE"
+      });
+    });
+
     const edges: RoadmapEdge[] = Array.from(edgeMap.values());
+    coursePrereqPairs.forEach((pair) => {
+      if (prerequisiteCourseById.has(pair.courseId)) {
+        edges.push({ source: `course:${pair.courseId}`, target: pair.loId });
+      }
+    });
 
     const { data: visitRows } = await (supabase as any)
       .from("student_submission_visit")
@@ -654,11 +720,13 @@ function buildRoadmap({
   lo,
   prerequisites,
   dependents,
+  prerequisiteCourses = [],
   progressMap
 }: {
   lo: LearningObjectDetail;
   prerequisites: LearningObject[];
   dependents: LearningObject[];
+  prerequisiteCourses?: Array<{ id: string; title: string; slug: string }>;
   progressMap: Map<string, any> | null;
 }): { nodes: RoadmapNode[]; edges: RoadmapEdge[]; currentNodeId: string } {
   const nodes: RoadmapNode[] = [
@@ -669,6 +737,15 @@ function buildRoadmap({
       difficulty: pr.difficulty_level,
       estimatedTime: pr.estimated_time_minutes,
       status: (progressMap?.get(pr.id)?.status as RoadmapNode["status"]) ?? "NOT_STARTED"
+    })),
+    ...prerequisiteCourses.map((course) => ({
+      id: `course:${course.id}`,
+      slug: course.slug,
+      title: course.title,
+      difficulty: 0,
+      estimatedTime: 0,
+      status: "NOT_STARTED" as const,
+      kind: "COURSE_PREREQUISITE" as const
     })),
     {
       id: lo.id,
@@ -690,6 +767,7 @@ function buildRoadmap({
 
   const edges: RoadmapEdge[] = [
     ...prerequisites.map((pr) => ({ source: pr.id, target: lo.id })),
+    ...prerequisiteCourses.map((course) => ({ source: `course:${course.id}`, target: lo.id })),
     ...dependents.map((dep) => ({ source: lo.id, target: dep.id }))
   ];
 

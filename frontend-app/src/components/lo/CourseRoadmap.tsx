@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import type { Route } from "next";
 import type { NodeMouseHandler, ReactFlowInstance } from "reactflow";
 import type { RoadmapNode, RoadmapEdge } from "@/components/lo/RoadmapTree";
+import { GraduationCap } from "lucide-react";
 
 interface Props {
   courseSlug?: string;
@@ -24,6 +25,9 @@ const statusColorMap: Record<RoadmapNode["status"], string> = {
 };
 
 const mostTakenPathColor = "#fbbf24"; // Amber/gold for highlight
+// Course-prerequisite accent — same saturation level as the status colors
+// above (not a brighter/neon outlier), reserved exclusively for this node kind.
+const coursePrerequisiteAccent = "#8b5cf6";
 
 export function CourseRoadmap({ courseSlug = "dsa", nodes, edges, mostTakenPathNodeIds = [], nodeVisitCounts = {} }: Props) {
   const router = useRouter();
@@ -124,20 +128,33 @@ export function CourseRoadmap({ courseSlug = "dsa", nodes, edges, mostTakenPathN
         const baseColor = statusColorMap[node.status];
 
         const visitCount = nodeVisitCounts[node.id] ?? 0;
+        const isCoursePrereq = node.kind === "COURSE_PREREQUISITE";
         return {
           id: node.id,
-          data: { label: CourseNodeContent(node, isOnPath, visitCount), status: node.status, slug: node.slug },
+          data: {
+            label: CourseNodeContent(node, isOnPath, visitCount),
+            status: node.status,
+            slug: node.slug,
+            kind: node.kind,
+          },
           position: positionMap.get(node.id) ?? { x: 80, y: 70 },
           sourcePosition: Position.Right,
           targetPosition: Position.Left,
           style: {
-            background: "#0f172a",
-            border: `3px solid ${isOnPath ? mostTakenPathColor : baseColor}`,
+            // Same base card fill as an ordinary node, with only the
+            // faintest violet cast — the accent lives in the border/badge,
+            // not the fill, so the node still reads as "part of the roadmap."
+            background: isCoursePrereq ? "#13112a" : "#0f172a",
+            border: isCoursePrereq ? `3px solid ${coursePrerequisiteAccent}` : `3px solid ${isOnPath ? mostTakenPathColor : baseColor}`,
             borderRadius: 16,
             padding: 16,
             color: "white",
             boxShadow: isOnPath ? `0 0 20px ${mostTakenPathColor}80` : "none",
             fontWeight: isOnPath ? "600" : "500",
+            maxWidth: isCoursePrereq ? "220px" : undefined,
+            whiteSpace: isCoursePrereq ? ("normal" as const) : undefined,
+            wordBreak: isCoursePrereq ? ("break-word" as const) : undefined,
+            textAlign: isCoursePrereq ? ("center" as const) : undefined,
             cursor: "pointer"
           }
         };
@@ -173,6 +190,11 @@ export function CourseRoadmap({ courseSlug = "dsa", nodes, edges, mostTakenPathN
   }, [flowEdges, flowNodes, rfInstance]);
 
   const handleNodeClick = useCallback<NodeMouseHandler>((_, node) => {
+    const data = node.data as { kind?: RoadmapNode["kind"]; slug?: string } | undefined;
+    if (data?.kind === "COURSE_PREREQUISITE") {
+      if (data.slug) router.push(`/courses/${data.slug}` as Route);
+      return;
+    }
     router.push(`/courses/${courseSlug}?lo=${node.id}` as Route);
   }, [courseSlug, router]);
 
@@ -218,6 +240,18 @@ export function CourseRoadmap({ courseSlug = "dsa", nodes, edges, mostTakenPathN
 }
 
 function CourseNodeContent(node: RoadmapNode, isOnPath: boolean, visitCount: number) {
+  if (node.kind === "COURSE_PREREQUISITE") {
+    return (
+      <div className="flex flex-col items-center gap-1">
+        <p className="text-sm font-semibold leading-snug">{node.title}</p>
+        <p className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-violet-300">
+          <GraduationCap className="h-3 w-3" />
+          Course prerequisite
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-1">
       <p className="text-sm font-semibold">{node.title}</p>

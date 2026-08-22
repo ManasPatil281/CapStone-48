@@ -32,7 +32,7 @@ export default async function CourseLandingPage({ params }: PageProps) {
     .map((row: any) => row.learning_object_id as string)
     .filter(Boolean);
 
-  const [submissionRes, learningObjectRes, edgeRes] = loIds.length
+  const [submissionRes, learningObjectRes, edgeRes, coursePrereqRes] = loIds.length
     ? await Promise.all([
         supabase
           .from("teacher_lo_submission")
@@ -46,9 +46,19 @@ export default async function CourseLandingPage({ params }: PageProps) {
           .select("source_lo_id, target_lo_id, teacher_lo_submission!inner(status)")
           .eq("teacher_lo_submission.status", "approved")
           .in("source_lo_id", loIds)
-          .in("target_lo_id", loIds)
+          .in("target_lo_id", loIds),
+        // Aggregated the same way the LO-LO edges above are: any approved
+        // submission of an LO in this course may declare a course
+        // prerequisite. This visualises submission-scoped relationships; it
+        // does not claim every submission of that LO shares the prerequisite.
+        (supabase as any)
+          .from("teacher_lo_submission_course_prerequisite")
+          .select("prerequisite_course_id, teacher_lo_submission!inner(learning_object_id, status)")
+          .eq("teacher_lo_submission.status", "approved")
+          .in("teacher_lo_submission.learning_object_id", loIds)
       ])
     : [
+        { data: [], error: null },
         { data: [], error: null },
         { data: [], error: null },
         { data: [], error: null }
@@ -64,6 +74,10 @@ export default async function CourseLandingPage({ params }: PageProps) {
 
   if (edgeRes.error) {
     console.error("[CourseLandingPage] Failed to fetch course roadmap edges:", edgeRes.error);
+  }
+
+  if (coursePrereqRes.error) {
+    console.error("[CourseLandingPage] Failed to fetch course prerequisites:", coursePrereqRes.error);
   }
 
   const submissions = (submissionRes.data ?? []) as Array<{
@@ -128,7 +142,45 @@ export default async function CourseLandingPage({ params }: PageProps) {
     }
   });
 
+  // Deduplicate (prerequisite course -> target LO) pairs across submissions.
+  const coursePrereqPairs = new Map<string, { courseId: string; loId: string }>();
+  (coursePrereqRes.data ?? []).forEach((row: any) => {
+    const prerequisiteCourseId = row.prerequisite_course_id as string;
+    const targetLoId = row.teacher_lo_submission?.learning_object_id as string | undefined;
+    if (!prerequisiteCourseId || !targetLoId || !loIdSet.has(targetLoId)) return;
+    const key = `${prerequisiteCourseId}->${targetLoId}`;
+    if (!coursePrereqPairs.has(key)) {
+      coursePrereqPairs.set(key, { courseId: prerequisiteCourseId, loId: targetLoId });
+    }
+  });
+
+  const prerequisiteCourseIds = Array.from(new Set([...coursePrereqPairs.values()].map((pair) => pair.courseId)));
+  const { data: prerequisiteCourseRows } = prerequisiteCourseIds.length > 0
+    ? await supabase.from("course").select("id, title, slug").in("id", prerequisiteCourseIds)
+    : { data: [] };
+
+  const prerequisiteCourseById = new Map(
+    ((prerequisiteCourseRows as Array<{ id: string; title: string; slug: string }> | null) ?? []).map((c) => [c.id, c])
+  );
+
+  prerequisiteCourseById.forEach((prereqCourse) => {
+    nodes.push({
+      id: `course:${prereqCourse.id}`,
+      slug: prereqCourse.slug,
+      title: prereqCourse.title,
+      difficulty: 0,
+      estimatedTime: 0,
+      status: "NOT_STARTED",
+      kind: "COURSE_PREREQUISITE"
+    });
+  });
+
   const edges = Array.from(edgeMap.values());
+  coursePrereqPairs.forEach((pair) => {
+    if (prerequisiteCourseById.has(pair.courseId)) {
+      edges.push({ source: `course:${pair.courseId}`, target: pair.loId });
+    }
+  });
 
   const { data: visitRows } = loIds.length
     ? await (supabase as any)

@@ -202,6 +202,19 @@ export default async function LearningStateDebugPage({
               </tbody>
             </table>
           )}
+
+          {state && state.prerequisites.coursePrerequisites.length > 0 && (
+            <div style={{ marginTop: "1rem" }}>
+              <p style={{ fontWeight: "bold", marginBottom: "0.25rem" }}>
+                Course prerequisites (advisory, facts only — no course mastery score is computed):
+              </p>
+              <ul>
+                {state.prerequisites.coursePrerequisites.map((c) => (
+                  <li key={c.courseId}>{c.title ?? c.courseId}</li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       )}
 

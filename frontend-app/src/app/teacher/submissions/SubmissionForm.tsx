@@ -59,6 +59,8 @@ export type SubmissionFormInitialData = {
   notes: string;
   prerequisites: string[];
   postrequisites: string[];
+  /** Prerequisite COURSE ids (advisory background course, not an LO) — see teacher_lo_submission_course_prerequisite. */
+  coursePrerequisiteIds: string[];
   contentItems: ContentItem[];
 };
 
@@ -170,6 +172,9 @@ export function SubmissionForm({ mode, initialData, successRedirect }: Submissio
 
   const [prerequisites, setPrerequisites] = useState<string[]>(initialData?.prerequisites ?? []);
   const [postrequisites, setPostrequisites] = useState<string[]>(initialData?.postrequisites ?? []);
+  const [coursePrerequisiteIds, setCoursePrerequisiteIds] = useState<string[]>(
+    initialData?.coursePrerequisiteIds ?? []
+  );
   const [contentItems, setContentItems] = useState<ContentItem[]>(
     normalizeInitialContentItems(initialData?.contentItems)
   );
@@ -575,6 +580,17 @@ export function SubmissionForm({ mode, initialData, successRedirect }: Submissio
 
     if (edgeDeleteErr) {
       throw edgeDeleteErr;
+    }
+
+    // Same rationale as edges: no historical/tracking table references this
+    // row, so a delete-then-reinsert on every save is safe here.
+    const { error: coursePrereqDeleteErr } = await supabase
+      .from("teacher_lo_submission_course_prerequisite")
+      .delete()
+      .eq("submission_id", targetSubmissionId);
+
+    if (coursePrereqDeleteErr) {
+      throw coursePrereqDeleteErr;
     }
   }
 
@@ -1082,6 +1098,29 @@ export function SubmissionForm({ mode, initialData, successRedirect }: Submissio
         }
       }
 
+      // ── Course prerequisites (advisory, distinct from LO edges above) ───────
+      const coursePrereqIdsSeen = new Set<string>();
+      const coursePrereqPayload: Array<{ submission_id: string; prerequisite_course_id: string }> = [];
+
+      for (const prereqCourseId of coursePrerequisiteIds) {
+        if (!prereqCourseId || prereqCourseId === courseId) continue;
+        if (coursePrereqIdsSeen.has(prereqCourseId)) continue;
+        coursePrereqIdsSeen.add(prereqCourseId);
+        coursePrereqPayload.push({ submission_id: activeSubmissionId, prerequisite_course_id: prereqCourseId });
+      }
+
+      for (const coursePrereqRow of coursePrereqPayload) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { error: coursePrereqErr } = await (supabase as any)
+          .from("teacher_lo_submission_course_prerequisite")
+          .insert(coursePrereqRow);
+
+        if (coursePrereqErr) {
+          console.error("[SubmissionForm] Course prerequisite insert failed:", coursePrereqErr);
+          throw coursePrereqErr;
+        }
+      }
+
       setSuccess(true);
       setTimeout(() => {
         router.push(successRedirect as any);
@@ -1145,6 +1184,12 @@ export function SubmissionForm({ mode, initialData, successRedirect }: Submissio
   const edgeLOs = useMemo(
     () => learningObjects.filter((lo) => lo.id !== selectedLoId),
     [learningObjects, selectedLoId]
+  );
+
+  // A submission's own course cannot sensibly be its own prerequisite.
+  const coursePrerequisiteOptions = useMemo(
+    () => courses.filter((course) => course.id !== courseId),
+    [courses, courseId]
   );
 
   async function handleAuthSignOut() {
@@ -1267,7 +1312,12 @@ export function SubmissionForm({ mode, initialData, successRedirect }: Submissio
               <select
                 className={selectCls}
                 value={courseId}
-                onChange={(e) => setCourseId(e.target.value)}
+                onChange={(e) => {
+                  const nextCourseId = e.target.value;
+                  setCourseId(nextCourseId);
+                  // A course can't be its own prerequisite; drop it if it was selected.
+                  setCoursePrerequisiteIds((prev) => prev.filter((id) => id !== nextCourseId));
+                }}
                 required
               >
                 <option value="">Select a course...</option>
@@ -1391,29 +1441,61 @@ export function SubmissionForm({ mode, initialData, successRedirect }: Submissio
               <div className="h-4 w-0.5 rounded-full bg-brand" />
               <h2 className="text-sm font-semibold text-slate-200">Prerequisites</h2>
             </div>
-            <p className="text-xs text-slate-500">
-              LOs the student should complete before this one (prerequisite -&gt; this LO)
-            </p>
-            {edgeLOs.length === 0 ? (
-              <p className="text-sm text-slate-500">No other LOs available</p>
-            ) : (
-              <div className="max-h-40 space-y-1 overflow-y-auto rounded-md border border-slate-700 bg-slate-800/50 p-3">
-                {edgeLOs.map((lo) => (
-                  <label
-                    key={lo.id}
-                    className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 hover:bg-slate-700/40"
-                  >
-                    <input
-                      type="checkbox"
-                      className="accent-brand"
-                      checked={prerequisites.includes(lo.id)}
-                      onChange={() => toggleCheck(lo.id, prerequisites, setPrerequisites)}
-                    />
-                    <span className="text-sm text-slate-200">{lo.title}</span>
-                  </label>
-                ))}
-              </div>
-            )}
+
+            <div className="space-y-2">
+              <p className={labelCls}>Learning object prerequisites</p>
+              <p className="text-xs text-slate-500">
+                LOs the student should complete before this one (prerequisite -&gt; this LO)
+              </p>
+              {edgeLOs.length === 0 ? (
+                <p className="text-sm text-slate-500">No other LOs available</p>
+              ) : (
+                <div className="max-h-40 space-y-1 overflow-y-auto rounded-md border border-slate-700 bg-slate-800/50 p-3">
+                  {edgeLOs.map((lo) => (
+                    <label
+                      key={lo.id}
+                      className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 hover:bg-slate-700/40"
+                    >
+                      <input
+                        type="checkbox"
+                        className="accent-brand"
+                        checked={prerequisites.includes(lo.id)}
+                        onChange={() => toggleCheck(lo.id, prerequisites, setPrerequisites)}
+                      />
+                      <span className="text-sm text-slate-200">{lo.title}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <p className={labelCls}>Course prerequisites</p>
+              <p className="text-xs text-slate-500">
+                Entire courses this LO assumes background knowledge from. Advisory only — students are never
+                required to complete these courses before accessing this LO.
+              </p>
+              {coursePrerequisiteOptions.length === 0 ? (
+                <p className="text-sm text-slate-500">No other courses available</p>
+              ) : (
+                <div className="max-h-40 space-y-1 overflow-y-auto rounded-md border border-slate-700 bg-slate-800/50 p-3">
+                  {coursePrerequisiteOptions.map((course) => (
+                    <label
+                      key={course.id}
+                      className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 hover:bg-slate-700/40"
+                    >
+                      <input
+                        type="checkbox"
+                        className="accent-brand"
+                        checked={coursePrerequisiteIds.includes(course.id)}
+                        onChange={() => toggleCheck(course.id, coursePrerequisiteIds, setCoursePrerequisiteIds)}
+                      />
+                      <span className="text-sm text-slate-200">{course.title}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
           <div className={sectionCls}>

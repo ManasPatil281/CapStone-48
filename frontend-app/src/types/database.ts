@@ -186,6 +186,19 @@ export interface Database {
           target_lo_id: string;
         };
       };
+      teacher_lo_submission_course_prerequisite: {
+        Row: {
+          id: string;
+          submission_id: string;
+          prerequisite_course_id: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          submission_id: string;
+          prerequisite_course_id: string;
+        };
+      };
       teacher_lo_submission_assessment: {
         Row: {
           id: string;
