@@ -22,7 +22,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getGroqChat } from "@/lib/ai/model";
 import { DIAGNOSTIC_PROMPT } from "@/lib/ai/prompts";
 import { DiagnosisSchema, type Diagnosis } from "@/lib/ai/output-schemas";
-import { toTextContent, parseAndValidateJsonObject } from "@/lib/ai/structuredOutputFallback";
+import { toTextContent, parseAndValidateJsonObject, isRateLimitError } from "@/lib/ai/structuredOutputFallback";
 import type { StudentLearningState } from "@/lib/adaptive/studentLearningState";
 import type { RoadblockEvidence } from "@/lib/adaptive/roadblockEvidence";
 
@@ -49,12 +49,17 @@ export interface QuizDeepDiveAttempt {
 }
 
 // Bounds to keep the prompt small and focused, not an exhaustive dump.
-const MAX_DEEP_DIVE_ATTEMPTS = 3;
-const MAX_QUESTIONS_PER_ATTEMPT = 20;
+// Reduced from (3 attempts / 20 questions) after this was found to be the
+// single largest contributor to Groq TPM rate-limit failures on gpt-oss-20b
+// (see ADAPTIVE_AND_AGENTIC_ARCHITECTURE.md). Latest + best is sufficient for
+// the retention-decline pattern this evidence primarily supports — for a
+// declining student, "latest" already functionally is the worst attempt.
+const MAX_DEEP_DIVE_ATTEMPTS = 2;
+const MAX_QUESTIONS_PER_ATTEMPT = 10;
 
 /**
  * Reconstructs question-level evidence for a bounded set of quiz attempts
- * (latest, best-scoring, worst-scoring — deduplicated) using only existing
+ * (latest, best-scoring — deduplicated) using only existing
  * stored quiz data: `student_quiz_attempt.selected_answers` (confirmed shape:
  * Record<questionId, selectedOptionId>) and `shown_question_ids` (confirmed
  * shape: string[]), joined against `teacher_lo_submission_question(_option)`.
@@ -103,10 +108,6 @@ async function fetchQuizDeepDive(
     scored.length > 0
       ? scored.reduce((p, c) => ((c.score_percentage as number) > (p.score_percentage as number) ? c : p))
       : null;
-  const worst =
-    scored.length > 0
-      ? scored.reduce((p, c) => ((c.score_percentage as number) < (p.score_percentage as number) ? c : p))
-      : null;
 
   const selected: Array<{ attempt: (typeof attempts)[number]; role: QuizDeepDiveAttempt["role"] }> = [];
   const seen = new Set<string>();
@@ -117,7 +118,6 @@ async function fetchQuizDeepDive(
   };
   add(latest, "latest");
   add(best, "best");
-  add(worst, "other");
 
   // Defensive shape validation for jsonb columns — never assume without checking.
   const shownIdsByAttempt = new Map<string, string[]>();
@@ -247,18 +247,8 @@ export function formatStateSummary(state: StudentLearningState): string {
     }`
   );
   parts.push(
-    `Visits: ${state.visits.totalVisits}, active ${state.visits.totalActiveSeconds}s, idle ${state.visits.totalIdleSeconds}s`
+    `Engagement: ${state.visits.totalVisits} visit(s); content time ${state.contentEngagement.totalActiveSeconds}s active / ${state.contentEngagement.totalIdleSeconds}s idle`
   );
-  parts.push(
-    `Content-block engagement: ${state.contentEngagement.blocks.length} block(s) tracked, ${state.contentEngagement.totalActiveSeconds}s active / ${state.contentEngagement.totalIdleSeconds}s idle`
-  );
-  if (state.deliveryTypeEngagement.length > 0) {
-    parts.push(
-      `Delivery-type engagement (this submission only, exposure not preference): ${state.deliveryTypeEngagement
-        .map((d) => `${d.deliveryTypeName ?? d.deliveryTypeId}: ${d.activeSeconds}s`)
-        .join(", ")}`
-    );
-  }
   parts.push(`Active-recall due: ${state.revision.activeRecallEligible}`);
 
   if (state.prerequisites.prerequisiteDetails.length === 0) {
@@ -336,6 +326,10 @@ function deterministicNoRoadblockResult(): Diagnosis {
     possibleWeakConcepts: [],
     confidence: 1,
     evidenceLimitations: [],
+    // Unused by the UI today (FocusCard only shows the AI's read when a
+    // roadblock exists), but the schema field is required, so a grounded,
+    // always-true value is still needed here.
+    studentSummary: "Nothing concerning stands out here right now — your recent activity and mastery look healthy.",
   };
 }
 
@@ -346,18 +340,22 @@ function deterministicFallbackResult(evidence: RoadblockEvidence): Diagnosis {
   });
   const top = bySeverity[0];
 
+  // Student-facing copy must stay grounded in the actual evidence and must
+  // never leak internal/technical detail ("LLM unavailable", "rate limited",
+  // etc.) — that detail belongs in server logs only (see call site).
   return {
     hasRoadblock: true,
     diagnosisType: "INSUFFICIENT_EVIDENCE",
     primaryDiagnosis: top
-      ? `The diagnostic model was unavailable; the most severe deterministic signal was: ${top.type}.`
-      : "The diagnostic model was unavailable and no strong deterministic signal stood out.",
+      ? top.evidence
+      : "There's a possible roadblock here, but we don't have enough evidence yet to say exactly why.",
     explanation:
-      "This is a deterministic fallback, not an LLM diagnosis, generated because the diagnostic agent's LLM call failed. It only restates the deterministic Roadblock Evidence signals without further interpretation.",
+      "This is a deterministic summary of the detected warning signals, without further AI interpretation.",
     evidence: bySeverity.slice(0, 5).map((s) => s.evidence),
     possibleWeakConcepts: [],
     confidence: 0.3,
-    evidenceLimitations: ["LLM diagnosis unavailable; this is a deterministic fallback summary only."],
+    evidenceLimitations: ["AI interpretation was unavailable for this diagnosis; only deterministic evidence is shown."],
+    studentSummary: "There are some signs this topic may need attention, but there is not enough evidence yet to say exactly why.",
   };
 }
 
@@ -388,7 +386,11 @@ export async function diagnoseRoadblock(
   // reasoning model's hidden reasoning tokens as well as the final JSON —
   // 900 was getting exhausted by reasoning before the structured output
   // completed (json_validate_failed: max completion tokens reached).
-  const model = getGroqChat({ model: "openai/gpt-oss-20b", temperature: 0.2, maxTokens: 2500 });
+  // maxRetries: 0 — LangChain's own internal retry wrapper would otherwise
+  // silently re-attempt a rate-limited request 2 more times before our code
+  // ever sees the error, burning TPM quota that our own fallback logic below
+  // is specifically trying to conserve.
+  const model = getGroqChat({ model: "openai/gpt-oss-20b", temperature: 0.2, maxTokens: 2500, maxRetries: 0 });
 
   const prompt = await DIAGNOSTIC_PROMPT.formatMessages({
     stateSummary: formatStateSummary(state),
@@ -403,12 +405,23 @@ export async function diagnoseRoadblock(
   // instance). Same layered fallback already proven for gpt-oss models in
   // src/lib/ai/agents/learning-router.ts:
   //   1. functionCalling structured output (different decode path, Zod-validated)
-  //   2. plain invocation + manual JSON-object extraction + Zod safeParse
+  //   2. plain invocation + manual JSON-object extraction + Zod safeParse —
+  //      but ONLY when attempt 1 failed for a malformed-output reason, not
+  //      a rate-limit error (retrying an already-rate-limited request just
+  //      consumes more quota for another near-certain rejection)
   //   3. existing deterministic fallback (unchanged)
   try {
     const structuredModel = model.withStructuredOutput(DiagnosisSchema, { method: "functionCalling" });
     return await structuredModel.invoke(prompt);
   } catch (functionCallingError) {
+    if (isRateLimitError(functionCallingError)) {
+      console.error(
+        "[diagnostic-agent] Rate limited by Groq on the first attempt; skipping the plain-text retry and using the deterministic fallback.",
+        functionCallingError
+      );
+      return deterministicFallbackResult(evidence);
+    }
+
     console.warn(
       "[diagnostic-agent] functionCalling structured output failed, falling back to plain-text JSON parsing:",
       functionCallingError
@@ -418,7 +431,11 @@ export async function diagnoseRoadblock(
       const text = toTextContent(raw.content);
       return parseAndValidateJsonObject(text, DiagnosisSchema);
     } catch (parseError) {
-      console.error("[diagnostic-agent] Plain-text JSON fallback also failed:", parseError);
+      if (isRateLimitError(parseError)) {
+        console.error("[diagnostic-agent] Rate limited by Groq on the plain-text retry too:", parseError);
+      } else {
+        console.error("[diagnostic-agent] Plain-text JSON fallback also failed:", parseError);
+      }
       return deterministicFallbackResult(evidence);
     }
   }

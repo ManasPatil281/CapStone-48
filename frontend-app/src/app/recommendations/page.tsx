@@ -1,14 +1,27 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import type { Route } from "next";
 import { ArrowLeft, ArrowRight } from "lucide-react";
-import { generateRecommendations } from "@/lib/ai/agents/learning-router";
 import { requireAuth } from "@/lib/auth/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { SpacedRepetitionWidget } from "@/components/recommendations/SpacedRepetitionWidget";
-import { GraphMutatorWidget } from "@/components/recommendations/GraphMutatorWidget";
-import { PeerMatchingWidget } from "@/components/recommendations/PeerMatchingWidget";
+import { gatherRankedCandidates } from "@/lib/adaptive/candidateSubmissions";
+import { buildFocusResultFromState } from "@/lib/recommendations/buildFocusResult";
+import {
+  computeFocusFingerprint,
+  parseCachedFocusView,
+  FOCUS_CACHE_COOKIE,
+  FOCUS_CACHE_SCHEMA_VERSION,
+  type CachedFocusView,
+} from "@/lib/recommendations/focusCache";
+import { FocusCard } from "@/components/recommendations/FocusCard";
+import { FocusCacheWriter } from "@/components/recommendations/FocusCacheWriter";
+import { SecondaryRoadblockList, type SecondaryCandidateSummary } from "@/components/recommendations/SecondaryRoadblockList";
 
+// Same demo threshold used by src/lib/adaptive/studentLearningState.ts's
+// revision.activeRecallEligible (kept in sync, not duplicated as new logic).
+// This is a same-day placeholder, NOT a real spaced-repetition interval —
+// copy in this file must not imply otherwise.
 const ACTIVE_RECALL_DAYS = 0;
 
 type SubmissionDetail = {
@@ -46,11 +59,6 @@ type VisitRow = {
 type MasteryRow = {
   submission_id: string;
   mastery_score: number | null;
-};
-
-type ContentTimeRow = {
-  delivery_type_id: string | null;
-  active_seconds: number | null;
 };
 
 type QuizAttemptRow = {
@@ -93,7 +101,6 @@ function formatMastery(score: number | null | undefined): string {
   if (score === null || typeof score === "undefined" || Number.isNaN(score)) {
     return "Not calculated yet";
   }
-
   return `${Math.round(score)}% mastery`;
 }
 
@@ -101,7 +108,6 @@ function formatQuizScore(score: number | null | undefined): string {
   if (score === null || typeof score === "undefined" || Number.isNaN(score)) {
     return "Latest score: -";
   }
-
   return `Latest score: ${Math.round(score)}%`;
 }
 
@@ -137,7 +143,7 @@ function RecommendationSection({ model }: { model: SectionModel }) {
 
               <div className="space-y-1.5">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                  Why this is recommended
+                  Why this is here
                 </p>
                 <p className="text-xs leading-relaxed text-slate-300">{card.reason}</p>
               </div>
@@ -176,9 +182,6 @@ export default async function RecommendationsPage() {
   const sectionErrors: string[] = [];
   const latestVisitBySubmission = new Map<string, VisitRow>();
   const latestAttemptBySubmission = new Map<string, QuizAttemptRow>();
-  const totalByType = new Map<string, number>();
-  const deliveryTypeNameById = new Map<string, string>();
-  const prerequisiteEdges: Array<{ sourceLoId: string; targetLoId: string }> = [];
 
   const submissionById = new Map<string, SubmissionDetail>();
   const masteryBySubmissionId = new Map<string, number | null>();
@@ -192,7 +195,9 @@ export default async function RecommendationsPage() {
 
     const { data, error } = await supabaseAny
       .from("teacher_lo_submission")
-      .select("id, title, notes, course_id, learning_object_id, status, learning_object:learning_object_id(id,title), course:course_id(slug,title)")
+      .select(
+        "id, title, notes, course_id, learning_object_id, status, learning_object:learning_object_id(id,title), course:course_id(slug,title)"
+      )
       .in("id", missing);
 
     if (error) {
@@ -207,11 +212,9 @@ export default async function RecommendationsPage() {
       if (!submissionId || !courseSlug || !loId) {
         return;
       }
-
       if (row.status !== "approved") {
         return;
       }
-
       if (isSoftDeletedSubmission(row.notes as string | null | undefined)) {
         return;
       }
@@ -247,6 +250,114 @@ export default async function RecommendationsPage() {
     sectionErrors.push("Some mastery-based recommendations are temporarily unavailable.");
   }
 
+  // --- Primary adaptive pipeline: StudentLearningState -> RoadblockEvidence -> Diagnosis -> Pedagogical Planner ---
+  // Candidate ranking is fully deterministic (see candidateSubmissions.ts). Only the single
+  // highest-priority candidate is auto-analyzed by the LLM-based Diagnostic Agent + Planner;
+  // everything else stays free until the student explicitly asks for it (SecondaryRoadblockList).
+  const { candidates, recentVisitRows } = await gatherRankedCandidates(user.id);
+  const focusCandidate = candidates[0] ?? null;
+
+  // Session-level cache (see focusCache.ts): reuse the last computed Focus
+  // card for this exact submission if nothing evidence-relevant changed,
+  // instead of re-running the Diagnostic Agent + Planner on every revisit.
+  let focusView: CachedFocusView | null = null;
+  let focusIsFreshComputation = false;
+
+  if (focusCandidate) {
+    const fingerprint = computeFocusFingerprint(focusCandidate);
+    const cached = parseCachedFocusView(cookies().get(FOCUS_CACHE_COOKIE)?.value);
+
+    if (cached && cached.submissionId === focusCandidate.submissionId && cached.fingerprint === fingerprint) {
+      focusView = cached;
+    } else {
+      try {
+        const focusResult = await buildFocusResultFromState(focusCandidate.state, focusCandidate.evidence);
+        focusView = {
+          schemaVersion: FOCUS_CACHE_SCHEMA_VERSION,
+          submissionId: focusResult.submissionId,
+          fingerprint,
+          submissionTitle: focusResult.submissionTitle,
+          learningObjectId: focusResult.learningObjectId,
+          learningObjectTitle: focusResult.learningObjectTitle,
+          courseTitle: focusResult.courseTitle,
+          masteryScore: focusResult.masteryScore,
+          masteryLevel: focusResult.masteryLevel,
+          hasRoadblock: focusResult.hasRoadblock,
+          evidenceBullets: focusResult.evidenceBullets,
+          evidenceDetails: focusResult.evidenceDetails,
+          diagnosisType: focusResult.diagnosis.diagnosisType,
+          // studentSummary/studentReason are already written in second
+          // person by the Diagnostic Agent / Pedagogical Planner (schema-
+          // native fields) — cached and rendered as-is, no transform step.
+          // See focusCache.ts's v5 comment.
+          studentSummary: focusResult.diagnosis.studentSummary,
+          actionLabel: focusResult.actionLabel,
+          actionDetail: focusResult.actionDetail,
+          actionHref: focusResult.actionHref,
+          opensRemediation: focusResult.opensRemediation,
+          studentReason: focusResult.plan.studentReason,
+          suppressedLoIds: focusResult.suppressedLoIds,
+          focusTargetSubmissionId: focusResult.focusTargetSubmissionId,
+          focusTargetLoId: focusResult.focusTargetLoId,
+        };
+        focusIsFreshComputation = true;
+      } catch (error) {
+        console.error("[RecommendationsPage] Focus analysis failed:", error);
+        sectionErrors.push("Your personalised focus area is temporarily unavailable.");
+      }
+    }
+  }
+
+  const secondaryCandidates: SecondaryCandidateSummary[] = candidates
+    .slice(1)
+    .filter((c) => c.evidence.hasPotentialRoadblock)
+    .slice(0, 3)
+    .map((c) => ({
+      submissionId: c.submissionId,
+      learningObjectId: c.state.learningObject?.id ?? null,
+      learningObjectTitle: c.state.learningObject?.title ?? "Untitled topic",
+      courseTitle: c.state.course?.title ?? "",
+    }));
+
+  // --- Cross-section precedence/dedup (see docs §27.8, §27.11) ---
+  // A submission or LO already surfaced by a higher-priority section is
+  // excluded from every lower-priority section, so the page never shows
+  // the same item twice or a recommendation that contradicts the primary
+  // plan. Precedence: Focus (+ its actionable target) -> Other roadblock
+  // areas -> Continue learning -> Might be worth revisiting -> Ready to
+  // explore next -> Practice explaining.
+  const usedSubmissionIds = new Set<string>();
+  const usedLoIds = new Set<string>();
+  if (focusCandidate) {
+    usedSubmissionIds.add(focusCandidate.submissionId);
+    if (focusView?.learningObjectId) usedLoIds.add(focusView.learningObjectId);
+  }
+  // Whatever the Focus card's planner action actually targets (e.g. the real
+  // "Pointers and references" submission for REVISIT_PREREQUISITE, the
+  // chosen alternative for TRY_DIFFERENT_METHOD, the postrequisite for
+  // ADVANCE) is just as "claimed" as the focus submission itself — generic,
+  // not action-specific, so no action needs to be hardcoded here. This is
+  // what fixes a REVISIT_PREREQUISITE target reappearing under "Continue
+  // learning" (root cause: only the postrequisite-suppression rule existed
+  // before; the actual resolved target was never added to the used sets).
+  if (focusView?.focusTargetSubmissionId) usedSubmissionIds.add(focusView.focusTargetSubmissionId);
+  if (focusView?.focusTargetLoId) usedLoIds.add(focusView.focusTargetLoId);
+  secondaryCandidates.forEach((c) => {
+    usedSubmissionIds.add(c.submissionId);
+    if (c.learningObjectId) usedLoIds.add(c.learningObjectId);
+  });
+  // LO ids the primary plan says are not appropriate to present as "ready to
+  // explore next" yet (current LO + its postrequisites unless the plan is
+  // actively ADVANCE — see translateForStudent.ts's computeSuppressedLoIds()).
+  const suppressedLoIds = new Set(focusView?.suppressedLoIds ?? []);
+
+  // Sections are computed AND rendered in strict precedence order (see the
+  // usedSubmissionIds/usedLoIds comment above): Continue learning -> Might be
+  // worth revisiting -> Ready to explore next -> Practice explaining a
+  // concept. Each section excludes anything already claimed by a
+  // higher-priority section, then adds its own picks before the next section
+  // runs, so nothing appears twice and nothing contradicts the Focus card.
+
   // 1) Continue learning
   const continueLearning: SectionModel = {
     title: "Continue learning",
@@ -255,16 +366,13 @@ export default async function RecommendationsPage() {
   };
 
   try {
-    const { data, error } = await supabaseAny
-      .from("student_submission_visit")
-      .select("submission_id, started_at, ended_at")
-      .eq("student_id", user.id)
-      .order("started_at", { ascending: false })
-      .limit(40);
-
-    if (error) throw error;
-
-    ((data ?? []) as VisitRow[]).forEach((row) => {
+    // Reuses the visit rows gatherRankedCandidates() already fetched
+    // (identical table/columns/filter/order/limit) instead of re-querying —
+    // issuing the exact same PostgREST GET request twice within one
+    // server-render request previously triggered Next.js's fetch request
+    // memoization to serve a `.clone()` of the first response, which
+    // crashed with "Response.clone: Body has already been consumed".
+    (recentVisitRows as VisitRow[]).forEach((row) => {
       if (!row.submission_id) return;
       const current = latestVisitBySubmission.get(row.submission_id);
       const rowTs = Math.max(toMillis(row.ended_at), toMillis(row.started_at));
@@ -279,7 +387,10 @@ export default async function RecommendationsPage() {
     const candidateIds = Array.from(latestVisitBySubmission.keys());
     await loadSubmissionDetails(candidateIds);
 
-    const items = candidateIds
+    // Eligible BEFORE cross-section dedup — used only to distinguish "no
+    // candidates existed" from "candidates existed but were already covered
+    // by a higher-priority section" for the empty-state copy below.
+    const eligibleItems = candidateIds
       .map((id) => ({ id, detail: submissionById.get(id), visit: latestVisitBySubmission.get(id) }))
       .filter((item): item is { id: string; detail: SubmissionDetail; visit: VisitRow } =>
         Boolean(item.detail && item.visit)
@@ -292,7 +403,10 @@ export default async function RecommendationsPage() {
         const aTs = Math.max(toMillis(a.visit.ended_at), toMillis(a.visit.started_at));
         const bTs = Math.max(toMillis(b.visit.ended_at), toMillis(b.visit.started_at));
         return bTs - aTs;
-      })
+      });
+
+    const items = eligibleItems
+      .filter((item) => !usedSubmissionIds.has(item.id) && !usedLoIds.has(item.detail.learningObjectId))
       .slice(0, 5);
 
     continueLearning.cards = items.map((item) => ({
@@ -300,20 +414,110 @@ export default async function RecommendationsPage() {
       title: item.detail.title,
       subtitle: item.detail.learningObjectTitle,
       meta: `${item.detail.courseTitle} • ${formatMastery(masteryBySubmissionId.get(item.id))}`,
-      reason: "You opened this topic recently but your mastery is still below the level needed to move ahead confidently. We are nudging it again so the skill becomes stronger before you continue.",
+      reason: "You opened this topic recently and haven't reached a strong mastery level on it yet.",
       ctaLabel: "Continue",
       href: buildSubmissionHref(item.detail.courseSlug, item.id),
     }));
+
+    if (items.length === 0 && eligibleItems.length > 0) {
+      continueLearning.emptyMessage = "The topics you've recently visited are already covered above.";
+    }
+
+    items.forEach((item) => {
+      usedSubmissionIds.add(item.id);
+      usedLoIds.add(item.detail.learningObjectId);
+    });
   } catch (error) {
     console.error("[RecommendationsPage] Continue learning section failed:", error);
     sectionErrors.push("Continue learning could not be fully loaded.");
   }
 
-  // 2) Recommended next LOs
-  const recommendedNext: SectionModel = {
-    title: "Recommended next LOs",
-    emptyMessage:
-      "No path-based next modules found yet. Keep progressing and we will recommend the next steps.",
+  // 2) Might be worth revisiting (honest rework of the old "active recall" section —
+  // reuses the same real quiz data, but copy no longer implies a timed/scientific
+  // spaced-repetition schedule; ACTIVE_RECALL_DAYS is a same-day demo threshold).
+  const revisitSection: SectionModel = {
+    title: "Might be worth revisiting",
+    emptyMessage: "Nothing flagged for revision right now.",
+    cards: [],
+  };
+
+  try {
+    const { data: attempts, error: attemptErr } = await supabaseAny
+      .from("student_quiz_attempt")
+      .select("submission_id, score_percentage, submitted_at, created_at")
+      .eq("student_id", user.id)
+      .order("submitted_at", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false, nullsFirst: false })
+      .limit(200);
+
+    if (attemptErr) throw attemptErr;
+
+    ((attempts ?? []) as QuizAttemptRow[]).forEach((row) => {
+      if (!row.submission_id) return;
+      const current = latestAttemptBySubmission.get(row.submission_id);
+      const rowTs = Math.max(toMillis(row.submitted_at), toMillis(row.created_at));
+      const currentTs = current
+        ? Math.max(toMillis(current.submitted_at), toMillis(current.created_at))
+        : -1;
+      if (rowTs > currentTs) {
+        latestAttemptBySubmission.set(row.submission_id, row);
+      }
+    });
+
+    const thresholdMs = Date.now() - ACTIVE_RECALL_DAYS * 24 * 60 * 60 * 1000;
+
+    // Eligible BEFORE cross-section dedup (see the "Continue learning" comment above).
+    const eligibleCandidateIds = Array.from(latestAttemptBySubmission.entries())
+      .filter(([, row]) => Number(row.score_percentage ?? 0) >= 70)
+      .filter(([, row]) => {
+        const ts = Math.max(toMillis(row.submitted_at), toMillis(row.created_at));
+        return ts > 0 && ts < thresholdMs;
+      })
+      .map(([submissionId]) => submissionId);
+
+    await loadSubmissionDetails(eligibleCandidateIds);
+
+    const eligibleItems = eligibleCandidateIds
+      .map((id) => ({ id, detail: submissionById.get(id), attempt: latestAttemptBySubmission.get(id) }))
+      .filter((item): item is { id: string; detail: SubmissionDetail; attempt: QuizAttemptRow } =>
+        Boolean(item.detail && item.attempt)
+      );
+
+    const revisitItems = eligibleItems
+      .filter((item) => !usedSubmissionIds.has(item.id) && !usedLoIds.has(item.detail.learningObjectId))
+      .slice(0, 5);
+
+    revisitSection.cards = revisitItems.map((item) => ({
+      key: `recall-${item.id}`,
+      title: item.detail.title,
+      subtitle: item.detail.learningObjectTitle,
+      meta: `${item.detail.courseTitle} • ${formatQuizScore(item.attempt.score_percentage)}`,
+      reason: "You scored well on this before — a quick recall check helps make sure it's still solid.",
+      ctaLabel: "Quick recall check",
+      href: buildSubmissionHref(item.detail.courseSlug, item.id),
+    }));
+
+    if (revisitItems.length === 0 && eligibleItems.length > 0) {
+      revisitSection.emptyMessage = "Recent strong topics worth revisiting are already covered above.";
+    }
+
+    revisitItems.forEach((item) => {
+      usedSubmissionIds.add(item.id);
+      usedLoIds.add(item.detail.learningObjectId);
+    });
+  } catch (error) {
+    console.error("[RecommendationsPage] Revisit section failed:", error);
+    sectionErrors.push("Revision reminders are temporarily unavailable.");
+  }
+
+  // 3) Ready to explore next. Only shows topics the student is actually
+  // reasonably ready to move toward: excludes the focus LO and (unless the
+  // primary plan is actively ADVANCE) its postrequisites, via suppressedLoIds,
+  // so this section can never contradict the primary recommendation (e.g.
+  // "Review Pointers first" alongside "Start Stack").
+  const readyToExploreNext: SectionModel = {
+    title: "Ready to explore next",
+    emptyMessage: "No path-based next modules found yet. Keep progressing and we will recommend the next steps.",
     cards: [],
   };
 
@@ -358,7 +562,6 @@ export default async function RecommendationsPage() {
     }
 
     if (targetSubmissionIds.length === 0) {
-      // Fallback: recent approved submissions when path data is missing.
       const { data: fallbackRows, error: fallbackErr } = await supabaseAny
         .from("teacher_lo_submission")
         .select("id, status, notes")
@@ -376,175 +579,52 @@ export default async function RecommendationsPage() {
 
     await loadSubmissionDetails(targetSubmissionIds);
 
-    const uniqueCards = uniqueStrings(targetSubmissionIds)
+    // Eligible BEFORE cross-section dedup/suppression (see the "Continue
+    // learning" comment above) — real, approved, resolvable candidates.
+    const eligibleDetails = uniqueStrings(targetSubmissionIds)
       .map((id) => submissionById.get(id))
-      .filter((item): item is SubmissionDetail => Boolean(item))
-      .slice(0, 5)
-      .map((detail) => ({
-        key: `next-${detail.id}`,
-        title: detail.learningObjectTitle,
-        subtitle: detail.title,
-        meta: detail.courseTitle,
-        reason: usedPathSignal
-          ? "You already showed strength in the related topic, and this next step follows the learning path that usually comes after it."
-          : "This follows a recently completed or active learning path, so it is a safe next step while the system learns more about your progress.",
-        ctaLabel: "Start",
-        href: buildLoHref(detail.courseSlug, detail.learningObjectId),
-      }));
+      .filter((item): item is SubmissionDetail => Boolean(item));
 
-    recommendedNext.cards = uniqueCards;
+    const nextItems = eligibleDetails
+      .filter((detail) => !usedSubmissionIds.has(detail.id) && !usedLoIds.has(detail.learningObjectId))
+      .filter((detail) => !suppressedLoIds.has(detail.learningObjectId))
+      .slice(0, 5);
+
+    readyToExploreNext.cards = nextItems.map((detail) => ({
+      key: `next-${detail.id}`,
+      title: detail.learningObjectTitle,
+      subtitle: detail.title,
+      meta: detail.courseTitle,
+      reason: usedPathSignal
+        ? "You've shown strength in a related topic, and this usually follows it."
+        : "A safe next step while the system learns more about your progress.",
+      ctaLabel: "Start",
+      href: buildLoHref(detail.courseSlug, detail.learningObjectId),
+    }));
+
+    if (nextItems.length === 0 && eligibleDetails.length > 0) {
+      readyToExploreNext.emptyMessage =
+        "The next steps we found are already covered above — check your focus area and other flagged topics first.";
+    }
+
+    nextItems.forEach((detail) => {
+      usedSubmissionIds.add(detail.id);
+      usedLoIds.add(detail.learningObjectId);
+    });
   } catch (error) {
-    console.error("[RecommendationsPage] Recommended next LOs section failed:", error);
+    console.error("[RecommendationsPage] Ready to explore next section failed:", error);
     sectionErrors.push("Next learning recommendations are temporarily unavailable.");
   }
 
-  // 3) Based on your preferred content style
-  const preferredStyle: SectionModel = {
-    title: "Based on your preferred content style",
-    emptyMessage: "No clear content-style preference yet. Spend more focused time in modules to build this signal.",
-    cards: [],
-  };
-
-  try {
-    const { data: styleRows, error: styleErr } = await supabaseAny
-      .from("student_content_block_time")
-      .select("delivery_type_id, active_seconds")
-      .eq("student_id", user.id);
-
-    if (styleErr) throw styleErr;
-
-    ((styleRows ?? []) as ContentTimeRow[]).forEach((row) => {
-      if (!row.delivery_type_id) return;
-      const current = totalByType.get(row.delivery_type_id) ?? 0;
-      totalByType.set(row.delivery_type_id, current + Number(row.active_seconds ?? 0));
-    });
-
-    const deliveryTypeIds = Array.from(totalByType.keys());
-    if (deliveryTypeIds.length > 0) {
-      const { data: namesData, error: namesErr } = await supabaseAny
-        .from("delivery_type")
-        .select("id, name")
-        .in("id", deliveryTypeIds);
-
-      if (namesErr) throw namesErr;
-
-      ((namesData ?? []) as Array<{ id: string; name: string | null }>).forEach((row) => {
-        if (row.id) {
-          deliveryTypeNameById.set(row.id, row.name ?? "Content style");
-        }
-      });
-    }
-
-    const topType = Array.from(totalByType.entries()).sort((a, b) => b[1] - a[1])[0];
-
-    if (topType) {
-      const [deliveryTypeId, _seconds] = topType;
-
-      const [{ data: typeRows, error: typeErr }, { data: contentRows, error: contentErr }] =
-        await Promise.all([
-          supabaseAny.from("delivery_type").select("id, name").eq("id", deliveryTypeId).maybeSingle(),
-          supabaseAny
-            .from("teacher_lo_submission_content")
-            .select("submission_id")
-            .eq("delivery_type_id", deliveryTypeId)
-            .eq("is_active", true),
-        ]);
-
-      if (typeErr) throw typeErr;
-      if (contentErr) throw contentErr;
-
-      const typeName = normalizeCourseTitle((typeRows as { name?: string | null } | null)?.name ?? "Content style");
-      const submissionIds = uniqueStrings((contentRows ?? []).map((r: any) => r.submission_id as string)).filter(
-        (id) => !masteredSubmissionIds.has(id)
-      );
-
-      await loadSubmissionDetails(submissionIds);
-
-      preferredStyle.cards = submissionIds
-        .map((id) => submissionById.get(id))
-        .filter((item): item is SubmissionDetail => Boolean(item))
-        .slice(0, 3)
-        .map((detail) => ({
-          key: `style-${detail.id}`,
-          title: detail.title,
-          subtitle: detail.learningObjectTitle,
-          meta: `${detail.courseTitle} • ${typeName}`,
-          reason: `Most of your study time in this area is spent with ${typeName} content, and learning usually sticks better when the material matches how you prefer to study.`,
-          ctaLabel: "Try similar content",
-          href: buildSubmissionHref(detail.courseSlug, detail.id),
-        }));
-    }
-  } catch (error) {
-    console.error("[RecommendationsPage] Preferred content style section failed:", error);
-    sectionErrors.push("Content-style recommendations are temporarily unavailable.");
-  }
-
-  // 4) Active recall / revision reminders
-  const activeRecall: SectionModel = {
-    title: "Active recall / revision reminders",
-    emptyMessage: "No revision reminders yet. This appears after strong quiz attempts age for a couple of days.",
-    cards: [],
-  };
-
-  try {
-    const { data: attempts, error: attemptErr } = await supabaseAny
-      .from("student_quiz_attempt")
-      .select("submission_id, score_percentage, submitted_at, created_at")
-      .eq("student_id", user.id)
-      .order("submitted_at", { ascending: false, nullsFirst: false })
-      .order("created_at", { ascending: false, nullsFirst: false })
-      .limit(200);
-
-    if (attemptErr) throw attemptErr;
-
-    ((attempts ?? []) as QuizAttemptRow[]).forEach((row) => {
-      if (!row.submission_id) return;
-      const current = latestAttemptBySubmission.get(row.submission_id);
-      const rowTs = Math.max(toMillis(row.submitted_at), toMillis(row.created_at));
-      const currentTs = current
-        ? Math.max(toMillis(current.submitted_at), toMillis(current.created_at))
-        : -1;
-      if (rowTs > currentTs) {
-        latestAttemptBySubmission.set(row.submission_id, row);
-      }
-    });
-
-    const thresholdMs = Date.now() - ACTIVE_RECALL_DAYS * 24 * 60 * 60 * 1000;
-
-    const candidateIds = Array.from(latestAttemptBySubmission.entries())
-      .filter(([, row]) => Number(row.score_percentage ?? 0) >= 70)
-      .filter(([, row]) => {
-        const ts = Math.max(toMillis(row.submitted_at), toMillis(row.created_at));
-        return ts > 0 && ts < thresholdMs;
-      })
-      .map(([submissionId]) => submissionId);
-
-    await loadSubmissionDetails(candidateIds);
-
-    activeRecall.cards = candidateIds
-      .map((id) => ({ id, detail: submissionById.get(id), attempt: latestAttemptBySubmission.get(id) }))
-      .filter((item): item is { id: string; detail: SubmissionDetail; attempt: QuizAttemptRow } =>
-        Boolean(item.detail && item.attempt)
-      )
-      .slice(0, 5)
-      .map((item) => ({
-        key: `recall-${item.id}`,
-        title: item.detail.title,
-        subtitle: item.detail.learningObjectTitle,
-        meta: `${item.detail.courseTitle} • ${formatQuizScore(item.attempt.score_percentage)}`,
-        reason: `You scored well on this before, and enough time has passed that recall may be fading. A quick revision now helps turn short-term memory into long-term understanding.`,
-        ctaLabel: "Revise quiz",
-        href: buildSubmissionHref(item.detail.courseSlug, item.id),
-      }));
-  } catch (error) {
-    console.error("[RecommendationsPage] Active recall section failed:", error);
-    sectionErrors.push("Revision reminders are temporarily unavailable.");
-  }
-
-  // 5) Feynman technique prototype
-  const feynmanPrototype: SectionModel = {
-    title: "Feynman technique prototype",
-    emptyMessage: "No low-mastery submissions yet for explanation practice.",
+  // 4) Practice explaining a concept (honest rework of the old "Feynman prototype"
+  // section — Feynman evaluation is fully wired via /api/feynman/evaluate; this is
+  // just an opt-in browse list for students who want to use it proactively, separate
+  // from the roadblock-triggered FEYNMAN_CHECK action in the Focus card). Kept
+  // small and deduplicated so it doesn't repeat concepts already prominent
+  // elsewhere on the page.
+  const practiceSection: SectionModel = {
+    title: "Practice explaining a concept",
+    emptyMessage: "No low-mastery topics right now for explanation practice.",
     cards: [],
   };
 
@@ -556,191 +636,40 @@ export default async function RecommendationsPage() {
 
     await loadSubmissionDetails(underMasteredIds);
 
-    feynmanPrototype.cards = underMasteredIds
+    // Eligible BEFORE cross-section dedup (see the "Continue learning"
+    // comment above) — real, approved, low-mastery candidates. This is what
+    // distinguishes "this student genuinely has no low-mastery topics" from
+    // "they do, but those topics are already covered by a higher-priority
+    // section" for the empty-state copy below — the two are not the same
+    // fact and must not use the same message.
+    const eligibleDetails = underMasteredIds
       .map((id) => submissionById.get(id))
-      .filter((item): item is SubmissionDetail => Boolean(item))
-      .slice(0, 3)
-      .map((detail) => ({
-        key: `feynman-${detail.id}`,
-        title: "Explain this concept in your own words",
-        subtitle: `${detail.title} • ${detail.learningObjectTitle}`,
-        meta: detail.courseTitle,
-        reason: "This topic is still below your comfort level, and explaining it in your own words is a simple way to spot missing pieces before the next assessment.",
-        helperText:
-          "Feynman explanation scoring can be connected to the existing AI tutor in the next phase.",
-        ctaLabel: "Explain concept",
-        href: `/recommendations/feynman/${detail.id}` as Route,
-      }));
-  } catch (error) {
-    console.error("[RecommendationsPage] Feynman section failed:", error);
-    sectionErrors.push("Feynman prototype suggestions are temporarily unavailable.");
-  }
+      .filter((item): item is SubmissionDetail => Boolean(item));
 
-  const sections = [
-    continueLearning,
-    recommendedNext,
-    preferredStyle,
-    activeRecall,
-    feynmanPrototype,
-  ];
+    const practiceItems = eligibleDetails
+      .filter((detail) => !usedSubmissionIds.has(detail.id) && !usedLoIds.has(detail.learningObjectId))
+      .slice(0, 2);
 
-  try {
-    const knownLoIds = uniqueStrings(Array.from(submissionById.values()).map((s) => s.learningObjectId));
-    if (knownLoIds.length > 0) {
-      const { data: edgeRows, error: edgeErr } = await supabaseAny
-        .from("teacher_lo_submission_edge")
-        .select("source_lo_id, target_lo_id")
-        .in("source_lo_id", knownLoIds);
+    practiceSection.cards = practiceItems.map((detail) => ({
+      key: `feynman-${detail.id}`,
+      title: "Explain this concept in your own words",
+      subtitle: `${detail.title} • ${detail.learningObjectTitle}`,
+      meta: detail.courseTitle,
+      reason: "Explaining a topic simply is a quick way to spot the pieces you haven't fully nailed down yet.",
+      ctaLabel: "Explain concept",
+      href: `/recommendations/feynman/${detail.id}` as Route,
+    }));
 
-      if (edgeErr) throw edgeErr;
-
-      (edgeRows ?? []).forEach((row: any) => {
-        if (row.source_lo_id && row.target_lo_id) {
-          prerequisiteEdges.push({
-            sourceLoId: String(row.source_lo_id),
-            targetLoId: String(row.target_lo_id),
-          });
-        }
-      });
+    if (practiceItems.length === 0 && eligibleDetails.length > 0) {
+      practiceSection.emptyMessage = "Your priority topics are already covered in the recommendations above.";
     }
   } catch (error) {
-    console.error("[RecommendationsPage] Failed to load prerequisite edges for AI routing:", error);
+    console.error("[RecommendationsPage] Practice section failed:", error);
+    sectionErrors.push("Practice suggestions are temporarily unavailable.");
   }
 
-  const aiAvailableSubmissions = Array.from(submissionById.values())
-    .slice(0, 20)
-    .map((submission) => ({
-      id: submission.id,
-      title: submission.title,
-      loTitle: submission.learningObjectTitle,
-      courseTitle: submission.courseTitle,
-      courseSlug: submission.courseSlug,
-      loId: submission.learningObjectId,
-      mastery: masteryBySubmissionId.get(submission.id) ?? null,
-    }));
-
-  const aiSignalMastery = Array.from(masteryBySubmissionId.entries()).map(([submissionId, score]) => ({
-    submissionId,
-    score: typeof score === "number" ? score : 0,
-    level:
-      typeof score === "number"
-        ? score >= 70
-          ? "advanced"
-          : score >= 40
-            ? "developing"
-            : "beginner"
-        : "beginner",
-    lastCalculatedAt: new Date().toISOString(),
-  }));
-
-  const aiSignalVisits = Array.from(latestVisitBySubmission.values())
-    .filter((row) => row.submission_id)
-    .slice(0, 10)
-    .map((row) => ({
-      submissionId: String(row.submission_id),
-      startedAt: row.started_at ?? new Date().toISOString(),
-      endedAt: row.ended_at ?? null,
-      activeSeconds: 0,
-      idleSeconds: 0,
-    }));
-
-  const aiSignalQuizzes = Array.from(latestAttemptBySubmission.values())
-    .filter((row) => row.submission_id)
-    .slice(0, 10)
-    .map((row) => ({
-      submissionId: String(row.submission_id),
-      scores: typeof row.score_percentage === "number" ? [row.score_percentage] : [0],
-      latestAt: row.submitted_at ?? row.created_at ?? new Date().toISOString(),
-    }));
-
-  const aiSignalStyles = Array.from(totalByType.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
-    .map(([deliveryTypeId, totalSeconds]) => ({
-      deliveryTypeId,
-      deliveryTypeName: deliveryTypeNameById.get(deliveryTypeId) ?? "Content style",
-      totalActiveSeconds: totalSeconds,
-    }));
-
-  const dynamicRecommendationOutput = await generateRecommendations({
-    signals: {
-      masteryScores: aiSignalMastery,
-      recentVisits: aiSignalVisits,
-      quizTrajectories: aiSignalQuizzes,
-      contentStylePreferences: aiSignalStyles,
-    },
-    availableSubmissions: aiAvailableSubmissions,
-    prerequisiteEdges,
-  }).catch((error) => {
-    console.error("[RecommendationsPage] AI recommendation generation failed:", error);
-    return null;
-  });
-
-  const aiSectionCardsByType = new Map<string, SectionCard[]>();
-  if (dynamicRecommendationOutput) {
-    dynamicRecommendationOutput.sections.forEach((section) => {
-      const mappedCards: SectionCard[] = [];
-
-      section.items.forEach((item) => {
-        const detail = submissionById.get(item.submissionId);
-        if (!detail) return;
-
-        mappedCards.push({
-          key: `${section.sectionType}-${detail.id}`,
-          title: detail.title,
-          subtitle: detail.learningObjectTitle,
-          meta: `${detail.courseTitle} • ${formatMastery(masteryBySubmissionId.get(detail.id))}`,
-          reason: item.reason,
-          helperText: `Confidence ${item.confidence.toFixed(2)} • Priority ${item.priority}`,
-          ctaLabel:
-            section.sectionType === "continue"
-              ? "Continue"
-              : section.sectionType === "next"
-                ? "Start"
-                : section.sectionType === "style"
-                  ? "Try similar content"
-                  : section.sectionType === "recall"
-                    ? "Revise quiz"
-                    : "Explain concept",
-          href:
-            section.sectionType === "continue" || section.sectionType === "recall"
-              ? buildSubmissionHref(detail.courseSlug, detail.id)
-              : section.sectionType === "feynman"
-                ? (`/recommendations/feynman/${detail.id}` as Route)
-                : buildLoHref(detail.courseSlug, detail.learningObjectId),
-        });
-      });
-
-      if (mappedCards.length > 0) {
-        aiSectionCardsByType.set(section.sectionType, mappedCards);
-      }
-    });
-  }
-
-  const mergedSections = sections.map((section) => {
-    const sectionType =
-      section.title === "Continue learning"
-        ? "continue"
-        : section.title === "Recommended next LOs"
-          ? "next"
-          : section.title === "Based on your preferred content style"
-            ? "style"
-            : section.title === "Active recall / revision reminders"
-              ? "recall"
-              : "feynman";
-
-    const aiCards = aiSectionCardsByType.get(sectionType);
-    if (!aiCards || aiCards.length === 0) {
-      return section;
-    }
-
-    return {
-      ...section,
-      cards: aiCards,
-    };
-  });
-
-  const hasAnyCards = mergedSections.some((section) => section.cards.length > 0);
+  const sections = [continueLearning, revisitSection, readyToExploreNext, practiceSection];
+  const hasAnyCards = Boolean(focusView) || sections.some((section) => section.cards.length > 0);
 
   const starterRecommendations: SectionCard[] = [];
   if (!hasAnyCards) {
@@ -771,7 +700,7 @@ export default async function RecommendationsPage() {
             title: detail.title,
             subtitle: detail.learningObjectTitle,
             meta: detail.courseTitle,
-            reason: "The system does not have enough personal signals yet, so this is a safe starting point while it learns which topics fit your pace and study style.",
+            reason: "We don't have enough of your activity yet to personalise this — here's a safe starting point.",
             ctaLabel: "Start",
             href: buildSubmissionHref(detail.courseSlug, detail.id),
           }))
@@ -797,21 +726,10 @@ export default async function RecommendationsPage() {
           <div>
             <h1 className="text-3xl font-bold tracking-tight text-slate-50">Recommendations</h1>
             <p className="mt-1 text-sm text-slate-500">
-              Personalised suggestions based on your learning activity, quiz performance, and content
-              preferences. Each recommendation explains what we noticed and why it is useful for you.
+              Built from your recent activity, mastery, and quiz history — including a closer look
+              whenever something looks like it might be a roadblock.
             </p>
           </div>
-        </div>
-
-        <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-            How these suggestions are built
-          </p>
-          <p className="mt-2 text-sm leading-relaxed text-slate-300">
-            The system looks at what you recently studied, how well you answered quizzes, how long you stayed engaged,
-            and which content style helps you learn best. It then chooses the next step that matches your pattern instead
-            of giving a random suggestion.
-          </p>
         </div>
 
         {sectionErrors.length > 0 && (
@@ -820,15 +738,44 @@ export default async function RecommendationsPage() {
           </div>
         )}
 
-        <SpacedRepetitionWidget />
-        <GraphMutatorWidget />
-        <PeerMatchingWidget />
+        {focusView && (
+          <>
+            <FocusCard
+              submissionTitle={focusView.submissionTitle}
+              learningObjectTitle={focusView.learningObjectTitle}
+              courseTitle={focusView.courseTitle}
+              masteryScore={focusView.masteryScore}
+              masteryLevel={focusView.masteryLevel}
+              hasRoadblock={focusView.hasRoadblock}
+              evidenceBullets={focusView.evidenceBullets}
+              evidenceDetails={focusView.evidenceDetails}
+              diagnosisType={focusView.diagnosisType}
+              // Schema-native, already second-person text from the agents —
+              // rendered directly, no post-hoc transform. See focusCache.ts's
+              // v5 comment.
+              studentSummary={focusView.studentSummary}
+              studentReason={focusView.studentReason}
+              actionLabel={focusView.actionLabel}
+              actionDetail={focusView.actionDetail}
+              actionHref={focusView.actionHref as Route | null}
+              opensRemediation={focusView.opensRemediation}
+            />
+            {focusIsFreshComputation && (
+              <FocusCacheWriter
+                submissionId={focusView.submissionId}
+                fingerprint={focusView.fingerprint}
+                view={focusView}
+              />
+            )}
+          </>
+        )}
 
-        <RecommendationSection model={mergedSections[0]} />
-        <RecommendationSection model={mergedSections[1]} />
-        <RecommendationSection model={mergedSections[2]} />
-        <RecommendationSection model={mergedSections[3]} />
-        <RecommendationSection model={mergedSections[4]} />
+        {secondaryCandidates.length > 0 && <SecondaryRoadblockList candidates={secondaryCandidates} />}
+
+        <RecommendationSection model={sections[0]} />
+        <RecommendationSection model={sections[1]} />
+        <RecommendationSection model={sections[2]} />
+        <RecommendationSection model={sections[3]} />
 
         {!hasAnyCards && (
           <section className="space-y-3 rounded-xl border border-slate-800 bg-slate-900/40 p-4 sm:p-5">
@@ -855,7 +802,7 @@ export default async function RecommendationsPage() {
 
                     <div className="space-y-1.5">
                       <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        Why this is recommended
+                        Why this is here
                       </p>
                       <p className="text-xs leading-relaxed text-slate-300">{card.reason}</p>
                     </div>

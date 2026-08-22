@@ -220,8 +220,9 @@ Strict grounding rules — you MUST follow all of these:
 - Do not recalculate or contradict the supplied mastery/quiz scores; treat them as given facts.
 - If the deterministic Roadblock Evidence found no signals at all, or the available evidence is too thin/conflicting to identify a likely cause, prefer "INSUFFICIENT_EVIDENCE" over guessing.
 - Confidence (0-1) must be LOWER when evidence is missing, thin, or conflicting. Do not report high confidence just because many signals are present — check whether they actually agree with each other.
+- In addition to the internal fields above (which remain research/debug-quality — precise, allowed to name categories/numbers), also produce "studentSummary": 1-2 sentences written DIRECTLY to the student. Address them only as "you"/"your". NEVER say "the student", "the learner", "they", or "their" to refer to the student. Do not use internal terms like diagnosisType names, "evidence array", "confidence score", or other developer language. Stay grounded in the exact same evidence as primaryDiagnosis/explanation — do not introduce any new claim that isn't already supported by them.
 
-Output format: return exactly ONE JSON object matching the required fields. Do not return an array. Do not include markdown code fences. Do not repeat, restate, or describe the JSON schema itself — output only the actual field values for this specific diagnosis.
+Output format: return exactly ONE JSON object matching the required fields, including both the internal fields and studentSummary. Do not return an array. Do not include markdown code fences. Do not repeat, restate, or describe the JSON schema itself — output only the actual field values for this specific diagnosis.
 
 Choose exactly one diagnosisType from:
 - CONCEPTUAL_DIFFICULTY: evidence suggests the student does not yet understand the underlying concept.
@@ -274,9 +275,10 @@ Strict rules:
 - Do not treat missing evidence as weakness.
 - If the evidence is too thin, conflicting, or the diagnosis was INSUFFICIENT_EVIDENCE, CONTINUE or NO_ACTION is an acceptable and often correct choice — do not force a stronger intervention than the evidence supports.
 - Confidence (0-1) must be LOWER when evidence is thin or conflicting.
-- List genuine alternative actions you considered and why you did not choose them.
+- List at most 2-3 genuine alternative actions you considered and why you did not choose them — do not list more than 3. Keep each reasonNotChosen concise, ideally under 180 characters, and avoid repeating evidence already stated elsewhere in your response. Prefer fewer, more useful alternatives over an exhaustive list.
+- In addition to the internal fields above (which remain research/debug-quality), also produce "studentReason": 1-2 sentences written DIRECTLY to the student explaining why this action was chosen. Address them only as "you"/"your". NEVER say "the student", "the learner", "they", or "their". Do not mention internal signal names, RoadblockEvidence types, or other developer/debug terminology. Stay grounded in the exact same evidence/targets already used for "reason" — do not introduce any new claim or target.
 
-Output format: return exactly ONE JSON object matching the required fields. Do not return an array. Do not include markdown code fences. Do not repeat, restate, or describe the JSON schema itself — output only the actual field values for this specific plan.
+Output format: return exactly ONE JSON object matching the required fields, including both the internal fields and studentReason. Do not return an array. Do not include markdown code fences. Do not repeat, restate, or describe the JSON schema itself — output only the actual field values for this specific plan.
 
 Student Learning State summary:
 {stateSummary}

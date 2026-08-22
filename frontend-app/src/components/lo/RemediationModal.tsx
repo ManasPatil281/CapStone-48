@@ -25,11 +25,13 @@ export function RemediationModal({
 }: RemediationModalProps) {
   const [lesson, setLesson] = useState<RemediationMicroLesson | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [currentStep, setCurrentStep] = useState(0);
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
 
   const fetchLesson = async () => {
     setIsLoading(true);
+    setError(null);
     try {
       const res = await fetch("/api/ai/remediate", {
         method: "POST",
@@ -42,6 +44,7 @@ export function RemediationModal({
       setCurrentStep(0);
     } catch (err) {
       console.error(err);
+      setError("Couldn't generate a lesson right now. Please try again in a moment.");
     } finally {
       setIsLoading(false);
     }
@@ -87,6 +90,7 @@ export function RemediationModal({
               >
                 <Sparkles className="mr-2 h-4 w-4" /> Generate 3-Card Micro-Lesson
               </Button>
+              {error && <p className="text-xs text-red-400">{error}</p>}
             </div>
           )}
 

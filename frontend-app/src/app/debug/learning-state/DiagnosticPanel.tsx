@@ -119,6 +119,11 @@ export function DiagnosticPanel({ submissionId }: { submissionId: string }) {
             </p>
             <p style={{ marginTop: "0.5rem", color: "#aaa" }}>{diagnosis.explanation}</p>
 
+            <p style={{ marginTop: "0.5rem", fontWeight: "bold", color: "#8fbcff" }}>
+              studentSummary (shown on /recommendations):
+            </p>
+            <p style={{ color: "#cfe4ff" }}>{diagnosis.studentSummary}</p>
+
             {diagnosis.evidence.length > 0 && (
               <>
                 <p style={{ marginTop: "0.5rem", fontWeight: "bold" }}>Evidence:</p>
@@ -208,6 +213,11 @@ export function DiagnosticPanel({ submissionId }: { submissionId: string }) {
               {planResult.plan.targetDeliveryTypeId ?? "—"}
             </p>
             <p style={{ marginTop: "0.5rem", color: "#aaa" }}>{planResult.plan.reason}</p>
+
+            <p style={{ marginTop: "0.5rem", fontWeight: "bold", color: "#8fbcff" }}>
+              studentReason (shown on /recommendations):
+            </p>
+            <p style={{ color: "#cfe4ff" }}>{planResult.plan.studentReason}</p>
 
             {planResult.plan.supportingSignals.length > 0 && (
               <>

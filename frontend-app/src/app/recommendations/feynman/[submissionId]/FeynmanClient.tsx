@@ -11,6 +11,8 @@ type EvalResult = {
   feedback: string;
   newMasteryScore: number;
   masteryLevel: MasteryLevel;
+  misconceptions?: string[];
+  followUpQuestion?: string;
 };
 
 const MIN_LENGTH = 50;
@@ -94,6 +96,8 @@ export function FeynmanClient({
         feedback: data.feedback,
         newMasteryScore: data.newMasteryScore,
         masteryLevel: data.masteryLevel,
+        misconceptions: Array.isArray(data.misconceptions) ? data.misconceptions : undefined,
+        followUpQuestion: typeof data.followUpQuestion === "string" ? data.followUpQuestion : undefined,
       });
     } catch {
       setError("Network error. Please check your connection and try again.");
@@ -203,6 +207,29 @@ export function FeynmanClient({
           </div>
 
           <p className="text-sm leading-relaxed text-slate-300">{result.feedback}</p>
+
+          {result.misconceptions && result.misconceptions.length > 0 && (
+            <div className="space-y-1.5 border-t border-slate-700/50 pt-3">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                Worth double-checking
+              </p>
+              <ul className="space-y-1 text-sm leading-relaxed text-slate-300">
+                {result.misconceptions.map((item, i) => (
+                  <li key={i} className="flex gap-2">
+                    <span className="text-slate-600">•</span>
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {result.followUpQuestion && (
+            <div className="space-y-1 border-t border-slate-700/50 pt-3">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Think about this</p>
+              <p className="text-sm leading-relaxed text-slate-300">{result.followUpQuestion}</p>
+            </div>
+          )}
 
           <p className="border-t border-slate-700/50 pt-3 text-xs text-slate-500">
             Updated mastery score:{" "}

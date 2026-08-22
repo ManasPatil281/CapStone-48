@@ -28,14 +28,14 @@
  * or tracking.
  */
 
-import { getGroqChat } from "@/lib/ai/model";
+import { getGeminiChat } from "@/lib/ai/model";
 import { PEDAGOGICAL_PLANNER_PROMPT } from "@/lib/ai/prompts";
 import { PedagogicalPlanSchema, type Diagnosis, type PedagogicalPlan } from "@/lib/ai/output-schemas";
-import { toTextContent, parseAndValidateJsonObject } from "@/lib/ai/structuredOutputFallback";
+import { isRateLimitError } from "@/lib/ai/structuredOutputFallback";
 import type { StudentLearningState } from "@/lib/adaptive/studentLearningState";
-import type { RoadblockEvidence } from "@/lib/adaptive/roadblockEvidence";
+import type { RoadblockEvidence, RoadblockSignal } from "@/lib/adaptive/roadblockEvidence";
 import type { PlannerContext, PlannerTargetLo, PlannerTargetSubmission } from "@/lib/adaptive/plannerContext";
-import { formatStateSummary, formatRoadblockSummary } from "@/lib/ai/agents/diagnostic-agent";
+import { formatRoadblockSummary } from "@/lib/ai/agents/diagnostic-agent";
 
 export interface PlannerResult {
   plan: PedagogicalPlan;
@@ -44,6 +44,22 @@ export interface PlannerResult {
 }
 
 /* ── Format helpers ──────────────────────────────────────────────────── */
+
+/**
+ * Deliberately minimal — the planner does NOT need the full
+ * StudentLearningState repeated. RoadblockEvidence (the actual decision
+ * evidence) and the Diagnosis (interpretation) are already passed in full;
+ * this is just enough to let the planner name the topic naturally in its
+ * `reason` text. Re-sending the entire state summary here was found to be
+ * the single largest source of duplicated tokens between the Diagnostic
+ * Agent and Planner prompts (see ADAPTIVE_AND_AGENTIC_ARCHITECTURE.md).
+ */
+function formatMinimalContext(state: StudentLearningState): string {
+  return [
+    `Topic: ${state.learningObject?.title ?? "unknown"} (${state.course?.title ?? "unknown course"})`,
+    `Current submission mastery: ${state.mastery?.score ?? "no evidence"} (${state.mastery?.level ?? "n/a"})`,
+  ].join("\n");
+}
 
 function formatTargetLoList(targets: PlannerTargetLo[]): string {
   if (targets.length === 0) return "  (none available)";
@@ -129,6 +145,7 @@ function deterministicHealthyPlan(context: PlannerContext): PlannerResult {
         confidence: 1,
         supportingSignals: [],
         alternativesConsidered: [],
+        studentReason: "You're in good shape here — it looks like a good time to move on to the next topic.",
       },
       groundingNotes: [],
     };
@@ -144,6 +161,7 @@ function deterministicHealthyPlan(context: PlannerContext): PlannerResult {
       confidence: 1,
       supportingSignals: [],
       alternativesConsidered: [],
+      studentReason: "You're doing fine here — keep going with your current plan.",
     },
     groundingNotes: [],
   };
@@ -151,8 +169,20 @@ function deterministicHealthyPlan(context: PlannerContext): PlannerResult {
 
 /* ── Post-LLM grounding validation ──────────────────────────────────── */
 
+/**
+ * Safe, generic studentReason text to substitute when grounding validation
+ * downgrades the LLM's chosen action below. studentReason is shown verbatim
+ * to students (unlike `reason`, which stays internal-only), so it must never
+ * be left referencing an action that is no longer the one being taken.
+ */
+const SAFE_STUDENT_REASON_ON_DOWNGRADE: Partial<Record<PedagogicalPlan["action"], string>> = {
+  CONTINUE: "Continuing to work through this a bit more is a good next step for now.",
+  NO_ACTION: "You're doing fine here — keep going with your current plan.",
+};
+
 function sanitizePlan(raw: PedagogicalPlan, context: PlannerContext): PlannerResult {
   const notes: string[] = [];
+  const originalAction = raw.action;
   let { action, targetLoId, targetSubmissionId, targetDeliveryTypeId } = raw;
 
   const prereqLoIds = new Set(context.prerequisiteTargets.map((t) => t.loId));
@@ -221,9 +251,124 @@ function sanitizePlan(raw: PedagogicalPlan, context: PlannerContext): PlannerRes
     targetDeliveryTypeId = null;
   }
 
+  const studentReason =
+    action !== originalAction ? SAFE_STUDENT_REASON_ON_DOWNGRADE[action] ?? raw.studentReason : raw.studentReason;
+
   return {
-    plan: { ...raw, action, targetLoId, targetSubmissionId, targetDeliveryTypeId },
+    plan: { ...raw, action, targetLoId, targetSubmissionId, targetDeliveryTypeId, studentReason },
     groundingNotes: notes,
+  };
+}
+
+/* ── Deterministic grounded fallback (LLM unavailable) ───────────────────
+ * Used only when both the functionCalling and plain-JSON LLM attempts fail
+ * (including rate-limiting). Uses ONLY RoadblockEvidence signals + the
+ * already-validated PlannerContext candidate lists — never re-derives or
+ * guesses new evidence, and never picks a target that wasn't already a
+ * validated candidate. Deliberately covers only a few obvious, safely
+ * gradeable cases; it does not attempt to recreate the full LLM planner.
+ *
+ * Student-facing `reason` text is always grounded in the actual matched
+ * signal's own evidence string — it must never say things like "the
+ * planning model was unavailable"; that technical detail belongs in
+ * console logs at the call site only.
+ */
+const RETENTION_SIGNAL_TYPES = new Set<RoadblockSignal["type"]>([
+  "QUIZ_RECENT_FAILURE_AFTER_STRONG_PERFORMANCE",
+  "RETENTION_RISK_ACTIVE_RECALL_DUE",
+  "QUIZ_DECLINING_TREND",
+  "QUIZ_LATEST_BELOW_BEST",
+]);
+
+const PRACTISE_SIGNAL_TYPES = new Set<RoadblockSignal["type"]>([
+  "QUIZ_MULTIPLE_ATTEMPTS_NO_PROFICIENCY",
+  "QUIZ_REPEATED_LOW_PERFORMANCE",
+]);
+
+function deterministicGroundedFallback(evidence: RoadblockEvidence, context: PlannerContext): PlannerResult {
+  const groundingNotes = [
+    "Planner LLM unavailable after structured-output and rate-limit-aware retries; used a conservative deterministic fallback grounded only in RoadblockEvidence + validated targets. See server logs for the technical cause.",
+  ];
+
+  const prereqSignal = evidence.signals.find((s) => s.type === "PREREQUISITE_LOW_MASTERY" && s.relatedLoId);
+  if (prereqSignal?.relatedLoId) {
+    const target = context.prerequisiteTargets.find(
+      (t) => t.loId === prereqSignal.relatedLoId && t.submissions.length > 0
+    );
+    if (target) {
+      return {
+        plan: {
+          action: "REVISIT_PREREQUISITE",
+          targetLoId: target.loId,
+          targetSubmissionId: target.submissions[0].submissionId,
+          targetDeliveryTypeId: null,
+          reason: `${prereqSignal.evidence} Reviewing this prerequisite is a safe next step.`,
+          confidence: 0.55,
+          supportingSignals: [prereqSignal.type],
+          alternativesConsidered: [],
+          studentReason: `Your mastery of ${target.title ?? "this prerequisite"} looks low, so reviewing it first should make this topic easier to build on.`,
+        },
+        groundingNotes,
+      };
+    }
+  }
+
+  const retentionSignal = evidence.signals.find((s) => RETENTION_SIGNAL_TYPES.has(s.type));
+  if (retentionSignal) {
+    return {
+      plan: {
+        action: "ACTIVE_RECALL",
+        targetLoId: null,
+        targetSubmissionId: null,
+        targetDeliveryTypeId: null,
+        reason: `${retentionSignal.evidence} A quick recall check on this material is a safe next step.`,
+        confidence: 0.5,
+        supportingSignals: [retentionSignal.type],
+        alternativesConsidered: [],
+        studentReason: "You've done well on this before — a quick recall check now should help make sure it's still solid.",
+      },
+      groundingNotes,
+    };
+  }
+
+  const practiseSignal = evidence.signals.find((s) => PRACTISE_SIGNAL_TYPES.has(s.type));
+  if (practiseSignal) {
+    return {
+      plan: {
+        action: "PRACTISE",
+        targetLoId: null,
+        targetSubmissionId: null,
+        targetDeliveryTypeId: null,
+        reason: `${practiseSignal.evidence} Some extra practice on this material is a safe next step.`,
+        confidence: 0.5,
+        supportingSignals: [practiseSignal.type],
+        alternativesConsidered: [],
+        studentReason: "A bit more practice on this should help it stick before moving on.",
+      },
+      groundingNotes,
+    };
+  }
+
+  const topSignal = [...evidence.signals].sort((a, b) => {
+    const rank: Record<string, number> = { high: 0, medium: 1, low: 2 };
+    return rank[a.severity] - rank[b.severity];
+  })[0];
+
+  return {
+    plan: {
+      action: "CONTINUE",
+      targetLoId: null,
+      targetSubmissionId: null,
+      targetDeliveryTypeId: null,
+      reason: topSignal
+        ? `${topSignal.evidence} Continuing to work through this material is a safe next step.`
+        : "Continuing to work through this material is a safe next step.",
+      confidence: 0.4,
+      supportingSignals: topSignal ? [topSignal.type] : [],
+      alternativesConsidered: [],
+      studentReason: "Continuing to work through this a bit more is a good next step while more evidence builds up.",
+    },
+    groundingNotes,
   };
 }
 
@@ -239,41 +384,53 @@ export async function planPedagogicalAction(
     return deterministicHealthyPlan(context);
   }
 
-  // Bounded, highly-grounded structured task: use the smaller 20b model to
-  // reduce TPM pressure while retaining more reasoning capacity than 8b.
-  // maxTokens maps to Groq's max_completion_tokens, which covers this
-  // reasoning model's hidden reasoning tokens as well as the final JSON —
-  // 900 was getting exhausted by reasoning before the structured output
-  // completed (json_validate_failed: max completion tokens reached).
-  const model = getGroqChat({ model: "openai/gpt-oss-20b", temperature: 0.2, maxTokens: 2500 });
+  // --- TEMPORARY provider test (see docs) ---
+  // The Diagnostic Agent stays on Groq openai/gpt-oss-20b, unchanged. Only
+  // the Planner is switched to Gemini here, to verify it can reliably do
+  // this same grounded structured-planning task without hitting Groq's
+  // shared 8k TPM window immediately after diagnosis. This is a single-
+  // provider test, NOT the Groq→Gemini→deterministic-fallback routing
+  // planned as a future task. Temperature matches the prior Groq call (0.2)
+  // as closely as Gemini's equivalent parameter allows.
+  //
+  // maxOutputTokens raised 2500 -> 4000: a maximal-but-valid PedagogicalPlan
+  // (reason + 8 supportingSignals + up to 4 alternativesConsidered) was
+  // occasionally getting truncated mid-string on verbose responses
+  // (OutputParserException: "Unterminated string in JSON"). Combined with
+  // tightening alternativesConsidered to 3 entries and a stronger brevity
+  // instruction in the prompt (see PEDAGOGICAL_PLANNER_PROMPT), this keeps
+  // the ceiling local to this one call — no other agent's token budget or
+  // getGeminiChat()'s own default changed.
+  //
+  // maxRetries: 1 — ChatGoogleGenerativeAI's own built-in retry support
+  // (not a hand-rolled loop) to ride out a single transient failure such as
+  // "503 the model is currently experiencing high demand" before falling
+  // through to the deterministic fallback below. Capped at 1, not repeated.
+  const model = getGeminiChat({ model: "gemini-2.5-flash", temperature: 0.2, maxOutputTokens: 4000, maxRetries: 1 });
 
   const prompt = await PEDAGOGICAL_PLANNER_PROMPT.formatMessages({
-    stateSummary: formatStateSummary(state),
+    stateSummary: formatMinimalContext(state),
     roadblockSummary: formatRoadblockSummary(evidence),
     diagnosisSummary: formatDiagnosisSummary(diagnosis),
     availableTargets: formatAvailableTargets(context),
   });
 
-  // Same layered fallback as diagnostic-agent.ts / learning-router.ts:
-  // gpt-oss-20b is unreliable with Groq's default native "jsonSchema" mode
-  // for this schema. Try functionCalling (different decode path) first,
-  // then plain invocation + manual JSON extraction + Zod safeParse, before
-  // falling back to the existing deterministic CONTINUE result.
+  // Single structured-output attempt only (per the test's explicit scope —
+  // no dual functionCalling/plain-JSON retry chain like the Groq path).
+  // `withStructuredOutput` still runs the plan through the same Zod
+  // `PedagogicalPlanSchema` validation as every other agent in this
+  // codebase — malformed Gemini output throws here and is caught below,
+  // never returned unvalidated. Any failure (rate limit or otherwise) goes
+  // straight to the existing deterministic, evidence-grounded fallback.
   let rawPlan: PedagogicalPlan | null = null;
   try {
-    const structuredModel = model.withStructuredOutput(PedagogicalPlanSchema, { method: "functionCalling" });
+    const structuredModel = model.withStructuredOutput(PedagogicalPlanSchema);
     rawPlan = await structuredModel.invoke(prompt);
-  } catch (functionCallingError) {
-    console.warn(
-      "[pedagogical-planner] functionCalling structured output failed, falling back to plain-text JSON parsing:",
-      functionCallingError
-    );
-    try {
-      const raw = await model.invoke(prompt);
-      const text = toTextContent(raw.content);
-      rawPlan = parseAndValidateJsonObject(text, PedagogicalPlanSchema);
-    } catch (parseError) {
-      console.error("[pedagogical-planner] Plain-text JSON fallback also failed:", parseError);
+  } catch (error) {
+    if (isRateLimitError(error)) {
+      console.error("[pedagogical-planner] Rate limited by Gemini; using the deterministic fallback.", error);
+    } else {
+      console.error("[pedagogical-planner] Gemini structured output failed; using the deterministic fallback:", error);
     }
   }
 
@@ -281,17 +438,5 @@ export async function planPedagogicalAction(
     return sanitizePlan(rawPlan, context);
   }
 
-  return {
-    plan: {
-      action: "CONTINUE",
-      targetLoId: null,
-      targetSubmissionId: null,
-      targetDeliveryTypeId: null,
-      reason: "The planning model was unavailable; defaulting to a safe, non-committal action.",
-      confidence: 0.3,
-      supportingSignals: [],
-      alternativesConsidered: [],
-    },
-    groundingNotes: ["Planner LLM unavailable; this is a deterministic fallback (CONTINUE), not a reasoned plan."],
-  };
+  return deterministicGroundedFallback(evidence, context);
 }

@@ -249,6 +249,14 @@ expose misconceptions that a quiz may miss.
 
 ## 6. Current deterministic recommendation sections
 
+> **Status note:** `/recommendations` was substantially redesigned around
+> the StudentLearningState → RoadblockEvidence → Diagnostic Agent →
+> Pedagogical Planner pipeline. See §27 for the current architecture,
+> including the deterministic candidate-ranking formula, the disposition of
+> every previously-existing agent/widget on this page, and the sections
+> described below. This section is kept as a record of the sections that
+> remain, in their reworked, honestly-labelled form.
+
 Source:
 
 `src/app/recommendations/page.tsx`
@@ -264,7 +272,7 @@ Primary idea:
 
 Pedagogical action: **continue/reinforce**.
 
-### 6.2 Recommended next LOs
+### 6.2 Recommended next topics
 
 Primary idea:
 
@@ -278,48 +286,52 @@ Pedagogical action: **advance**.
 
 Fallbacks may be used when graph/mastery signals are insufficient.
 
-### 6.3 Preferred content/teaching style
-
-Primary idea:
-
--   aggregate `student_content_block_time` active seconds by delivery
-    type;
--   identify the highest-engagement delivery type;
--   recommend approved submissions containing that delivery type;
--   avoid already mastered items where appropriate.
-
-Pedagogical action: **reinforce through an engaged teaching method**.
-
-Research caveat: this is currently engagement-based preference, not
-proven learning-effectiveness personalisation.
-
-### 6.4 Active recall/revision
+### 6.3 Might be worth revisiting
 
 Primary idea:
 
 -   inspect prior quiz attempts;
 -   select previously strong performance;
--   trigger a revision recommendation after an interval.
+-   surface it as worth a quick recall check.
 
 The reviewed recommendations page currently has:
 
 `ACTIVE_RECALL_DAYS = 0`
 
 This is a testing/demo value and must not be represented as a
-research-grade spaced-repetition interval.
+research-grade spaced-repetition interval. As of the §27 redesign, page copy
+for this section was explicitly reworded to avoid implying a timed/scientific
+schedule (no "enough time has passed" framing) — it just says a quick recall
+check helps confirm the topic is still solid.
 
 Pedagogical action: **retrieve/revise**.
 
-### 6.5 Feynman technique
+### 6.4 Practice explaining a concept
 
 Primary idea:
 
 -   identify under-mastered submissions;
--   ask the student to explain the LO in their own words;
--   evaluate conceptual understanding;
+-   offer the option to explain the LO in the student's own words;
+-   evaluate conceptual understanding via the existing Feynman flow;
 -   return feedback and an additional mastery signal.
 
+This is now an opt-in browse list, separate from the roadblock-triggered
+`FEYNMAN_CHECK` planner action (§27), which surfaces the same capability
+contextually when the evidence actually supports it.
+
 Pedagogical action: **explain/diagnose conceptual gaps**.
+
+### 6.5 Removed sections (§27)
+
+"Preferred content/teaching style" (aggregate `student_content_block_time`
+by delivery type) was removed as an independent, standalone section — its
+previous copy ("learning usually sticks better when the material matches how
+you prefer to study") stated a causal effectiveness claim the underlying
+engagement-only data does not support, which is exactly the "engagement ≠
+effectiveness" overclaim this document has warned against since §3. The
+underlying signal still feeds the Student Learning State and can surface
+inside a `TRY_DIFFERENT_METHOD` recommendation when the planner actually
+finds it relevant, but it is no longer presented as a standalone claim.
 
 ## 7. Data-driven popular path
 
@@ -801,6 +813,62 @@ exactly ONE JSON object... do not repeat or restate the JSON schema
 itself") to help the plain-JSON fallback path; no other prompt content
 changed.
 
+**Rate-limit-aware fallback (TPM exhaustion, distinct from malformed output).**
+Under sustained Groq TPM pressure, the first (`functionCalling`) attempt can
+fail with a genuine rate-limit error (`HTTP 429` / groq-sdk's `RateLimitError`
+/ a `rate_limit_exceeded` body) rather than a malformed-output error. Retrying
+immediately with the second (plain-JSON) attempt in that case just re-submits
+a same-size request into the same rate-limit window for a near-certain second
+rejection — wasted latency and quota. `src/lib/ai/structuredOutputFallback.ts`
+now exports `isRateLimitError()`, checked in both agents' catch blocks: a
+rate-limit error on the first attempt skips the plain-JSON retry entirely and
+goes straight to the deterministic fallback; the two attempts are only
+sequential for genuine format/schema failures, where a second try can
+reasonably succeed. Both agents also now set `maxRetries: 0` on their
+`getGroqChat()` call — LangChain's own internal retry wrapper would otherwise
+silently re-attempt a rate-limited request 2 more times before our code even
+sees the error, which was found to be part of why a single rate-limited
+`diagnoseRoadblock`/`planPedagogicalAction` call could burn up to 6 requests.
+
+**Prompt/token reduction.** Two changes, motivated by observed TPM
+rate-limiting on `gpt-oss-20b` (8000 TPM), keeping all grounding facts that
+actually matter to a diagnosis category, not a blanket shrink:
+
+-   Quiz deep-dive bounds reduced from 3 attempts/20 questions to **2
+    attempts/10 questions** (`MAX_DEEP_DIVE_ATTEMPTS`, `MAX_QUESTIONS_PER_ATTEMPT`
+    in `diagnostic-agent.ts`) — this was the single largest contributor to
+    prompt size. Latest + best is sufficient for the retention-decline
+    pattern this evidence primarily supports (for a declining student,
+    "latest" already functionally is the worst attempt, so dropping the
+    separate "worst" selection loses no signal for that case).
+-   `formatStateSummary()`'s delivery-type-engagement breakdown was removed
+    — it isn't referenced by any `diagnosisType` category and duplicated
+    information the planner's `PlannerContext.currentSubmissionDeliveryOptions`
+    already carries when relevant.
+-   The Pedagogical Planner no longer receives the full `formatStateSummary()`
+    at all — it was found to duplicate almost everything the Diagnostic
+    Agent already interpreted into `diagnosis.primaryDiagnosis`/`explanation`,
+    even though `RoadblockEvidence` + `Diagnosis` + the bounded
+    `PlannerContext` candidate lists already contain everything the planner
+    needs to decide. Replaced with `formatMinimalContext()`: just the LO/
+    course name and current submission mastery (2 lines), so the planner can
+    still name the topic naturally in its `reason` text. This was the
+    largest single reduction of the two.
+-   Diagnosis categories, planner actions, evidence thresholds, and all
+    instructional/rule text in both prompts are unchanged — reductions only
+    ever removed duplicated or category-irrelevant *data*, never grounding
+    rules.
+
+**Deterministic fallback copy must stay student-safe.** Both fallbacks
+previously said things like "the diagnostic/planning model was unavailable"
+in fields that are rendered directly to students (`primaryDiagnosis`,
+`plan.reason`). Both now build their fallback text only from the actual
+matched `RoadblockEvidence` signal's own `evidence` string (e.g. "Previously
+scored as high as 100%, but the latest attempt dropped to 0%. Reviewing this
+prerequisite is a safe next step.") — the "LLM unavailable"/technical detail
+moved to `console.error` only, never a schema field a student-facing
+component reads.
+
 **API route** — `POST /api/ai/diagnose` (`src/app/api/ai/diagnose/route.ts`):
 auth pattern copied from `api/feynman/evaluate/route.ts`
 (`supabase.auth.getUser()` → 401 → `user_profile.role` lookup → 403 unless
@@ -895,11 +963,19 @@ Every correction is recorded in `groundingNotes: string[]`, returned
 alongside the plan so corrections are visible rather than silent. This
 sanitization runs regardless of which structured-output path produced the
 raw plan (see "Structured-output reliability on `gpt-oss-20b`" under the
-Diagnostic Agent above — the planner uses the identical three-layer
-`functionCalling` → plain-JSON-parse-and-validate → deterministic-fallback
-approach). Only after all three layers are exhausted is the deterministic
-`CONTINUE` fallback at confidence `0.3` returned, instead of a 500 or a
-fabricated plan.
+Diagnostic Agent above — the planner uses the identical rate-limit-aware,
+three-layer `functionCalling` → plain-JSON-parse-and-validate →
+deterministic-fallback approach). Only after all three layers are exhausted
+does `deterministicGroundedFallback()` run — a conservative, evidence-only
+fallback (not a full re-implementation of the LLM planner) covering:
+`PREREQUISITE_LOW_MASTERY` signal + a valid prerequisite target →
+`REVISIT_PREREQUISITE`; a retention/decline-pattern signal
+(`QUIZ_RECENT_FAILURE_AFTER_STRONG_PERFORMANCE`, `RETENTION_RISK_ACTIVE_RECALL_DUE`,
+`QUIZ_DECLINING_TREND`, `QUIZ_LATEST_BELOW_BEST`) → `ACTIVE_RECALL`;
+repeated-low/no-proficiency quiz signals → `PRACTISE`; otherwise → `CONTINUE`.
+Every branch's `reason` is built from the actual matched signal's own
+evidence text — never a generic "model unavailable" message — instead of a
+500 or a fabricated plan.
 
 **API route** — `POST /api/ai/plan` (`src/app/api/ai/plan/route.ts`), same
 auth pattern as `/api/ai/diagnose`. Request body: `{ submissionId, diagnosis }`,
@@ -926,9 +1002,12 @@ diagnosis it was generated from). The LLM is never invoked automatically.
 This completes the full debug-visible pipeline: Student Learning State →
 Roadblock Evidence → Diagnostic Agent → Pedagogical Planner.
 
-**Not yet done (explicitly out of scope for this task):** the planner is
-not wired into `/recommendations`, no specialist agent is invoked based on
-its output, and no plan/intervention history is written to the database.
+**Update (§27):** the planner is now wired into `/recommendations` as the
+page's primary architecture — see §27 for the full integration. It still
+does not itself invoke specialist agents on its own — the page's translation
+layer maps `REMEDIATE` to the (now auth-fixed) remediation flow, and the
+other actions to real navigation links — and no plan/intervention history is
+written to the database (still a documented follow-up, not built).
 
 This builder does **not** yet perform struggle diagnosis, pedagogical action
 selection, or feed any agent/recommendation logic. It is a data-assembly
@@ -1258,4 +1337,558 @@ A future Student Learning State should distinguish:
 - **retention** — performance after a delay.
 
 This separation is a good-to-have research TODO and should guide new tracking work.
+
+## 27. `/recommendations` redesign: primary adaptive architecture (implemented)
+
+`/recommendations` was substantially redesigned to make the
+`StudentLearningState -> RoadblockEvidence -> Diagnosis -> Pedagogical Planner`
+pipeline its primary architecture, replacing a page that combined honest
+deterministic sections with several provisional/fabricated agentic widgets
+added during earlier MVP work. This section documents the new architecture,
+the full audit that motivated it, and the disposition of every existing
+agent/widget touched.
+
+### 27.1 Deterministic candidate ranking
+
+Source: `src/lib/adaptive/candidateSubmissions.ts` — `gatherRankedCandidates(studentId)`.
+
+Before any LLM call, the student's recently relevant submissions (from
+mastery + visit rows, bounded to the most recent 8) each get a
+`StudentLearningState` + `RoadblockEvidence` built (no LLM — this is the
+existing deterministic pipeline). They are ranked by an explicit, documented
+formula:
+
+```
+severityScore = 100 * (# of "high" severity signals)
+              +  10 * (# of "medium" severity signals)
+              +   1 * (# of "low" severity signals)
+```
+
+tie-broken by most recent activity (max of last mastery calculation and
+last visit timestamp) descending. The highest-ranked candidate becomes the
+page's single **focus candidate** — for a fully healthy student (all
+severityScores 0) this is simply their most recently active submission.
+
+### 27.2 Bounded automatic LLM use
+
+Only the focus candidate is automatically run through the full pipeline —
+`src/lib/recommendations/buildFocusResult.ts` (`buildFocusResultFromState` /
+`buildFocusResult`) calls `diagnoseRoadblock` → `buildPlannerContext` →
+`planPedagogicalAction` → `resolvePlanAction` exactly once per page load.
+Because `diagnoseRoadblock` and `planPedagogicalAction` both already
+short-circuit deterministically when `evidence.hasPotentialRoadblock` is
+false (§ Diagnostic Agent, § Pedagogical Planner above), a healthy student
+triggers **zero** LLM calls on page load — the bound is "at most 2 small-
+model calls per page view," not "always 2."
+
+Any other candidates with a detected roadblock (up to 3) are listed in a
+deliberately subdued, collapsed "Other areas that might need attention"
+section (`src/components/recommendations/SecondaryRoadblockList.tsx`) with
+a per-item **"Look into this"** button. Clicking it calls the new
+`POST /api/ai/recommend-action` route (same auth pattern as
+`/api/ai/diagnose`, self-scoped, read-only), which runs the identical
+pipeline for that one submission on demand. The LLM is never invoked for
+these unless the student explicitly asks.
+
+### 27.2.1 Session-level Focus card cache (no DB table)
+
+Source: `src/lib/recommendations/focusCache.ts`, `src/app/api/recommendations/focus-cache/route.ts`,
+`src/components/recommendations/FocusCacheWriter.tsx`.
+
+Revisiting `/recommendations` within the same browser session previously
+re-ran the Diagnostic Agent + Planner for the focus candidate every time,
+even if nothing about the student's evidence had changed — unnecessary LLM
+cost. Added a short-lived (`30` minute), `httpOnly` cookie cache, deliberately
+**not** a database table:
+
+-   `computeFocusFingerprint(candidate)` hashes exactly the evidence that
+    could change the Focus card's conclusion: mastery score + its
+    `last_calculated_at`, quiz attempt count/latest attempt timestamp/latest
+    score, and the sorted list of `RoadblockEvidence` signal `type:severity`
+    pairs. Any real change to these invalidates the cache.
+-   Because `src/app/recommendations/page.tsx` is a Server Component and a
+    plain RSC cannot call `cookies().set()` mid-render (only a Route Handler
+    or Server Action can), the cache is read-then-write-back rather than
+    read-write-in-place: the page reads the existing cookie cheaply at the
+    top of rendering; on a fingerprint+submissionId match it renders
+    straight from the cache (zero LLM calls); on a miss it computes fresh as
+    before and mounts an inert `FocusCacheWriter` client component that
+    fires a one-way `POST /api/recommendations/focus-cache` on mount to
+    persist the new value for the *next* visit. The write-back route is
+    auth-checked identically to the other agent routes and re-validates the
+    payload shape before setting the cookie.
+-   Only the fields `FocusCard` actually renders (`CachedFocusView`) are
+    cached — not the full `Diagnosis`/`PedagogicalPlan` objects — which is
+    also why `FocusCard`'s props were flattened to that same shape rather
+    than accepting the full objects, keeping the cookie comfortably under
+    the ~4KB per-cookie limit (the route defensively skips caching, without
+    erroring, if a payload ever exceeds a safety margin).
+-   The on-demand secondary-candidate flow (`SecondaryRoadblockList` /
+    `/api/ai/recommend-action`) is intentionally NOT cached — each click is
+    already an explicit student action, not a repeated automatic call.
+
+### 27.3 Translating the plan into a real action
+
+Source: `src/lib/recommendations/translateForStudent.ts` — `resolvePlanAction()`.
+
+The planner's `action` + target ids (already grounding-validated — see the
+Pedagogical Planner section above) are mapped to a friendly label and a
+real route:
+
+| Action | Student-facing label | Link target |
+|---|---|---|
+| `ADVANCE` | "Move on to the next topic" | a real postrequisite submission from `PlannerContext.postrequisiteTargets` |
+| `CONTINUE` | "Keep working on this" | the current submission |
+| `REVISIT_PREREQUISITE` | "Review the prerequisite first" | a real prerequisite submission from `PlannerContext.prerequisiteTargets` |
+| `TRY_DIFFERENT_METHOD` | "Try a different explanation" | a real alternative submission from `PlannerContext.currentSubmissionAlternatives`, or the current submission if none exists |
+| `ACTIVE_RECALL` | "Do a quick recall check" | the current submission |
+| `FEYNMAN_CHECK` | "Explain it in your own words" | `/recommendations/feynman/[submissionId]` |
+| `PRACTISE` | "Get some practice" | the current submission |
+| `REMEDIATE` | "Get a quick concept fix" | opens the (now auth-fixed) remediation flow, §27.5 |
+| `NO_ACTION` | "Keep going as planned" | no link |
+
+When the planner named a valid target LO but didn't specify a submission
+(or its specified one failed grounding validation), this layer
+deterministically picks the first submission already present in the
+planner's own validated candidate list for that LO — it never invents an
+id, and never does its own independent database search.
+
+The `ACTIVE_RECALL` description ("You scored well on this before — a quick
+recall check helps make sure it's still solid.") is deliberately worded to
+avoid implying a timed/scientific spaced-repetition schedule, since the
+underlying `activeRecallEligible` signal is still the same-day
+`ACTIVE_RECALL_DAYS = 0` demo threshold documented in §6.3 — not real
+spaced-repetition logic.
+
+### 27.4 Page structure
+
+`src/app/recommendations/page.tsx` now renders, top to bottom, in the exact
+same order the sections are computed (§27.8):
+
+1.  **Focus card** (`src/components/recommendations/FocusCard.tsx`) — the
+    hero. Explicitly separates deterministic evidence from LLM
+    interpretation: a "What we noticed" list shows a plain-language
+    translation of the top `RoadblockEvidence` signals (§27.9 — presentation
+    layer only, the underlying `evidence` strings are unchanged and still
+    what `/debug/learning-state` shows), with a collapsed "Details"
+    disclosure underneath holding the exact, precise numbers for students
+    who want them; and a visually distinct "AI's read on this" block (only
+    shown when a real diagnosis ran) shows the Diagnostic Agent's
+    `primaryDiagnosis` with an explicit `diagnosisType` translation. Numeric
+    confidence scores are never shown to students — this is a presentation
+    choice to avoid an analytics-dashboard feel, not a change to the
+    underlying `Diagnosis`/`PedagogicalPlan` schemas, which are unchanged.
+2.  **Other areas that may need attention** (§27.2) — subdued, on-demand.
+3.  **Continue learning**, **Might be worth revisiting**, **Ready to
+    explore next** (renamed from "Recommended next topics"), **Practice
+    explaining a concept** — the retained deterministic sections (§6),
+    reworded for honesty and now cross-section deduplicated/conflict-filtered
+    (§27.8).
+4.  **Starter recommendations** — unchanged fallback for a student with no
+    data yet.
+
+### 27.5 Existing-agent audit and disposition
+
+Every existing agent/widget touched by or related to this redesign was
+inspected end-to-end (component → API route → agent → data source) before
+deciding its disposition. Findings and outcomes:
+
+| Agent / widget | Finding | Disposition |
+|---|---|---|
+| `learning-router.ts` (`generateRecommendations`) | Was called unconditionally on every page load. Its input construction coerced missing mastery to `score: 0, level: "beginner"` and hardcoded `activeSeconds: 0, idleSeconds: 0` for every visit — a direct violation of "missing evidence must remain unknown, never 0." Also used an invented `advanced/developing/beginner` scale distinct from the real `Beginner/Developing/Proficient/Mastered` levels. Its sibling `/api/ai/recommend` route was confirmed orphaned (zero callers) with hardcoded demo data. | **Removed from the page.** Not deleted — kept as-is for any future use, but no longer called from `/recommendations`. Superseded in purpose by the new pipeline, which does the same job per-submission with real safeguards. |
+| `SpacedRepetitionWidget` | 100% hardcoded static array, including two non-existent fake submission ids (`"queue-sub-002"`, `"array-sub-003"`) linked via real, would-404 `<Link>`s. Not wired to `spaced-repetition-agent.ts` at all. | **Removed from the UI.** Component file kept, unmounted from the page. |
+| `GraphMutatorWidget` | Sent an identical hardcoded payload (fixed mastery score, fixed quiz scores, fixed LO title) regardless of the signed-in student. Route had zero authentication (defaulted `studentId` to `"std-1"` from the request body). Confirmed via code inspection: never writes to the database — the "mutation" is display-only text. | **Removed from the UI.** Route auth fixed (now requires an authenticated STUDENT) since the endpoint stays reachable. Agent/route kept, not deleted. |
+| `PeerMatchingWidget` | Same hardcoded-payload problem; the "peer" was either an LLM invention or a literally hardcoded fallback (`"Alex Rivera (Mastery 94%)"`). No real query against other students exists anywhere in the path. Route was also unauthenticated. | **Removed from the UI.** Route auth fixed. Real peer matching (an actual cross-student query) is flagged as a follow-up, not built — it is privacy-sensitive and nontrivial. |
+| `remediation-agent.ts` / `RemediationModal.tsx` / `/api/ai/remediate` | A complete, well-formed capability with **zero live callers** anywhere in the app (`RemediationModal` was never imported). Route was unauthenticated. Agent had no deterministic fallback (a bare `structuredModel.invoke()` with no try/catch). | **Wired in** as the `REMEDIATE` action's UI (`FocusCard`/`SecondaryRoadblockList` both open `RemediationModal` directly, reusing it as-is). Route auth fixed. `RemediationModal` gained a visible error state (previously a failed fetch was silently swallowed with no user feedback). The agent itself was not modified — a deterministic fallback for it is a reasonable future improvement, not done here. |
+| `struggle-detector.ts` | Confirmed (grep) to have **no live caller anywhere** in the app — it only exists as the architectural precedent `roadblockEvidence.ts`'s thresholds were deliberately copied from. | Left as-is. Out of scope for this page; not a `/recommendations` concern. |
+| `multi-agent-evaluator.ts` | Fully implemented (defender/strict/judge) but confirmed to have **zero callers** — the live Feynman path uses the simpler `feynman-coach.ts` instead. | Left as-is (dead code, not deleted per project convention). |
+| `tutor-agent.ts` | Live and well-grounded (4 real DB-backed tools) via `/api/chat` + `SubmissionChatPanel`/`AgentModeOverlay` — a genuinely good agent, just not related to `/recommendations`. | Untouched. Not surfaced on this page; a future "ask the tutor" CTA from the Focus card is a reasonable idea, not built now. |
+| Feynman flow (`FeynmanClient.tsx`, `/api/feynman/evaluate`) | Backend evaluation and mastery blending are correctly grounded and already documented above. The client only ever did a single evaluate call and **discarded** the `misconceptions`/`followUpQuestion` fields the API already returns. | **Kept, scope-limited rework**: `FeynmanClient.tsx` now renders `misconceptions` and `followUpQuestion` when present. The multi-turn Socratic loop itself was deliberately NOT built — that would be a larger Feynman redesign, out of scope here. |
+
+### 27.8 Precedence-based cross-section deduplication and conflict prevention
+
+The four lower deterministic sections were originally computed independently
+of each other and of the primary plan, which could produce contradictions
+like "Review Pointers first" (Focus card, `REVISIT_PREREQUISITE`) followed
+immediately by "Start Stack" (the old "Recommended next topics" section,
+driven purely by global mastered→postrequisite edges with no awareness of
+the current roadblock) — both individually true, but confusing/contradictory
+advice about the same LO.
+
+Fixed with two deterministic mechanisms, both computed in
+`src/app/recommendations/page.tsx`:
+
+**Suppressed LO ids** — `translateForStudent.ts`'s `computeSuppressedLoIds()`
+runs once, alongside the plan, inside `buildFocusResultFromState()` (it
+already has `PlannerContext` in scope) and is cached as part of
+`CachedFocusView.suppressedLoIds` so it's available even on a cache hit:
+
+-   the focus LO itself is always suppressed from "Ready to explore next";
+-   if the plan's `action` is anything other than `ADVANCE`, all of that
+    submission's postrequisite LOs are suppressed too — the student hasn't
+    demonstrated readiness to move past this LO, so `REVISIT_PREREQUISITE`,
+    `ACTIVE_RECALL`, `REMEDIATE`, `TRY_DIFFERENT_METHOD`, `PRACTISE`,
+    `CONTINUE`, and `FEYNMAN_CHECK` all suppress progression suggestions for
+    this LO's subtree;
+-   if `action === "ADVANCE"`, only the specific `targetLoId` already
+    offered as the Focus card's own CTA is suppressed (avoids an exact
+    duplicate card) — other legitimate postrequisites can still surface,
+    matching "if ADVANCE, progression recommendations are appropriate."
+
+**Precedence-ordered dedup** — the page computes (and renders) sections in
+this fixed order, threading two running `Set`s (`usedSubmissionIds`,
+`usedLoIds`) seeded with the focus candidate and every secondary candidate:
+
+1.  Primary focus
+2.  Other roadblock areas (secondary list)
+3.  Continue learning
+4.  Might be worth revisiting
+5.  Ready to explore next (also filtered by `suppressedLoIds`)
+6.  Practice explaining a concept (capped at 2 cards, down from 3, to stay a
+    small supplementary list rather than a third repetitive block)
+
+Each section excludes any submission/LO id already in either `Set` before
+building its cards, then adds its own picks to both `Set`s before the next
+section runs. This is why, for example, "Continue learning" and "Practice
+explaining a concept" — which previously used the identical `mastery < 70`
+filter and could show the same submission twice — no longer can.
+
+### 27.9 Plain-language evidence translation (presentation layer only)
+
+`translateForStudent.ts`'s `describeSignalForStudent()` is a deterministic,
+`signal.type`-keyed switch that turns each `RoadblockEvidence` signal into a
+short, student-facing sentence using the same real numbers already on
+`state`/`signal` (e.g. looking up the actual prerequisite title via
+`signal.relatedLoId`) — never string-parsing or re-deriving evidence, and
+never inventing a fact not already present. Examples: "Submission mastery is
+35.7 (Beginner), below the Proficient threshold (70)." becomes "Your mastery
+of this Stack lesson is still at Beginner level."; "Prerequisite mastery is
+0." becomes "Pointers and references looks like a weak foundation for this
+topic."
+
+Critically, **this does not change `roadblockEvidence.ts` or its `evidence`
+strings** — those remain exactly as they were, still what `/debug/learning-state`
+and any other research/debug view render. `buildFocusResult.ts` now produces
+both `evidenceBullets` (translated, shown by default) and `evidenceDetails`
+(the original raw grounded strings, shown only in `FocusCard`'s collapsed
+"Details" disclosure) from the same top signals, so the exact numbers remain
+available without leading with analytics language. A signal type not
+explicitly covered by the switch falls back to its raw `evidence` string
+(safe default, still factual, just less polished).
+
+### 27.6 New files
+
+- `src/lib/adaptive/candidateSubmissions.ts` — deterministic ranking (§27.1).
+- `src/lib/recommendations/translateForStudent.ts` — action/diagnosis → student copy, target resolution (§27.3), evidence translation (§27.9), suppressed-LO computation (§27.8).
+- `src/lib/recommendations/buildFocusResult.ts` — shared pipeline-run-and-translate helper, used by both the page (auto focus candidate) and the on-demand route (§27.2).
+- `src/app/api/ai/recommend-action/route.ts` — on-demand version of the pipeline for secondary candidates.
+- `src/components/recommendations/FocusCard.tsx`, `src/components/recommendations/SecondaryRoadblockList.tsx` — presentation (§27.4).
+- `src/lib/recommendations/focusCache.ts`, `src/app/api/recommendations/focus-cache/route.ts`, `src/components/recommendations/FocusCacheWriter.tsx` — session-level Focus card cache (§27.2.1).
+
+### 27.7 Explicitly not done in this redesign
+
+- No new intervention-history database table. A future
+  `student_intervention_event`-style table recording
+  `{evidence snapshot, diagnosis, plan, action shown, student response, subsequent mastery}`
+  would enable the outcome-feedback-loop research direction in §23, and is
+  recommended as a follow-up rather than built now.
+- No real cross-student peer-matching query.
+- No wiring of `spaced-repetition-agent.ts`'s richer scheduling,
+  `graph-mutator-agent.ts`, or `tutor-agent.ts` into `/recommendations`.
+- No deep-link-to-specific-content-block UI for `TRY_DIFFERENT_METHOD`.
+- No new dedicated "active recall" / "practice" micro-content UI — both
+  currently route to the existing submission page.
+- No multi-turn Socratic Feynman UI (kept single-shot, per scope).
+- **TODO (non-urgent, recorded per your explicit request, not implemented):**
+  visible loading feedback across `/recommendations` and related actions —
+  a spinner/in-app loading state for slow AI operations, disabled state on
+  clicked buttons to prevent accidental repeated clicks (e.g. "Look into
+  this" in `SecondaryRoadblockList.tsx` currently only shows a small
+  "Analyzing…" text swap, no disabled-button guard against a second click
+  mid-request), confirming all navigation already uses plain Next.js
+  `<Link>`s (it does, so browser/tab loading indicators already work where
+  the browser provides them — no change needed there), and cursor/progress
+  feedback during slower operations generally. Deliberately not built in
+  this task.
+- Retroactive suppression for on-demand-analyzed secondary candidates: once
+  a student clicks "Look into this" in `SecondaryRoadblockList.tsx` and it
+  resolves a target, that target is not retroactively removed from the
+  already-server-rendered lower sections (doing so would require either a
+  full page refetch or moving those sections to be client-driven, which
+  would be a larger structural change). Accepted as a known, minor,
+  low-frequency gap rather than "fixed" — flagged, not addressed, in this task.
+
+### 27.10 Pedagogical Planner provider test: Gemini (temporary, single-provider)
+
+To reduce pressure on Groq's shared 8k TPM window (the Planner call was
+frequently hitting it immediately after the Diagnostic Agent's own Groq
+call), the Pedagogical Planner was temporarily switched to
+`gemini-2.5-flash` via a new `@langchain/google-genai` dependency, to verify
+Gemini can reliably perform the same grounded structured-planning task. The
+**Diagnostic Agent is unchanged and stays on Groq `openai/gpt-oss-20b`** —
+only `src/lib/ai/agents/pedagogical-planner.ts`'s model call changed.
+
+-   `src/lib/ai/model.ts` gained `getGeminiChat()`, mirroring `getGroqChat()`'s
+    shape/conventions. Reads `GEMINI_API_KEY` from `process.env` (the SDK
+    itself also falls back to `GOOGLE_API_KEY`, but this project's explicit
+    convention is `GEMINI_API_KEY`, validated the same way `getGroqChat()`
+    validates `GROQ_API_KEY`). `maxRetries` defaults to `0` here too, for
+    the same reason as the Groq calls — no silent internal retries burning
+    quota before our own fallback logic runs.
+-   The planner's prompt (`PEDAGOGICAL_PLANNER_PROMPT`), `PlannerContext`,
+    `PedagogicalPlanSchema`, post-generation target-grounding validation
+    (`sanitizePlan`), and `deterministicGroundedFallback()` are all
+    completely unchanged — only the model/provider changed.
+-   Unlike the Groq path, this is a **single** structured-output attempt
+    (`model.withStructuredOutput(PedagogicalPlanSchema)`, no forced method —
+    Gemini's native structured-output support was used directly rather than
+    forcing `functionCalling`) — no dual functionCalling/plain-JSON retry
+    chain, and no second Gemini attempt on failure, per this test's explicit
+    scope. Any failure (rate limit or otherwise) goes straight to the
+    existing deterministic, evidence-grounded fallback. Malformed Gemini
+    output still cannot bypass validation — `withStructuredOutput` runs the
+    same Zod `PedagogicalPlanSchema.safeParse`-equivalent validation as
+    every other agent in this codebase, and throws (caught, then handled by
+    the fallback) rather than returning unvalidated data.
+-   `src/lib/ai/structuredOutputFallback.ts`'s `isRateLimitError()` was
+    broadened to also recognize Google's `GoogleGenerativeAIFetchError`
+    shape (`status: 429`, `RESOURCE_EXHAUSTED` body/message) alongside the
+    existing Groq/OpenAI-style detection, since it's now a cross-provider
+    utility.
+
+**This is a single-provider test only.** The planned next step —
+Groq→Gemini→deterministic-fallback routing, where Gemini is tried only
+after a Groq rate-limit — is a follow-up task and was deliberately NOT
+implemented here; the planner currently calls Gemini unconditionally
+whenever a plan is needed (i.e. whenever `evidence.hasPotentialRoadblock`
+is true), not as a fallback from Groq.
+
+### 27.11 Correctness/UX polish pass: generic target suppression, honest empty states, student-perspective copy
+
+Three presentation/filtering bugs found by auditing a real Stack case
+(`PREREQUISITE_GAP` → `REVISIT_PREREQUISITE` → real "Pointers and
+references" target) — all fixed deterministically, no architecture change.
+
+**Root cause of "Pointers and references" reappearing under "Continue
+learning".** `computeSuppressedLoIds()` (§27.8) only ever suppressed the
+*postrequisites* of the focus LO for non-`ADVANCE` actions — it never
+suppressed the actual resolved target of `REVISIT_PREREQUISITE` (a
+*prerequisite*, not a postrequisite) or `TRY_DIFFERENT_METHOD` (an
+alternative submission of the same LO). That suppression rule exists purely
+to stop "Ready to explore next" from claiming progression-readiness it
+hasn't earned — it was never meant to be the *only* mechanism dedup relied
+on, but nothing else fed the actual resolved target into the
+`usedSubmissionIds`/`usedLoIds` sets that "Continue learning"/"Might be
+worth revisiting"/"Practice explaining" check. So the one submission the
+Focus card is actively telling the student to go review was simply invisible
+to every other section's dedup logic.
+
+**Fix: generic target suppression, not per-action special-casing.**
+`ResolvedAction` (`translateForStudent.ts`) now returns the actual
+`targetSubmissionId` it resolved for the CTA href — whatever the action:
+the current submission for `CONTINUE`/`ACTIVE_RECALL`/`PRACTISE`/
+`FEYNMAN_CHECK`, the resolved prerequisite/postrequisite/alternative
+submission for `REVISIT_PREREQUISITE`/`ADVANCE`/`TRY_DIFFERENT_METHOD`, or
+`null` for `REMEDIATE`/`NO_ACTION` (no navigable target). `buildFocusResult.ts`
+surfaces this as `FocusResult.focusTargetSubmissionId` alongside
+`focusTargetLoId` (= `plan.targetLoId`, which `sanitizePlan` already only
+ever sets for `ADVANCE`/`REVISIT_PREREQUISITE`, so it's naturally empty
+when not meaningful — no extra branching needed). `page.tsx` seeds
+`usedSubmissionIds`/`usedLoIds` with these two values in addition to the
+focus submission and secondary candidates, before any of the four lower
+sections run. This is action-agnostic by construction — no action name is
+hardcoded in the suppression logic itself, so it generalizes to all nine
+planner actions without per-action rules. `computeSuppressedLoIds()` and its
+postrequisite-suppression rule for "Ready to explore next" are unchanged and
+still serve their original, distinct purpose.
+
+**Cache impact:** `CachedFocusView` gained `focusTargetSubmissionId`/
+`focusTargetLoId`, and `primaryDiagnosis`/`planReason` now hold
+already-translated ("you/your") text instead of the raw LLM prose (same
+field names, different value semantics — see below). `FOCUS_CACHE_SCHEMA_VERSION`
+bumped `2 → 3` so any cookie written before this change is treated as a
+clean cache miss, never partially trusted.
+
+**Honest empty states.** Each of the four lower sections previously computed
+its final card list by filtering candidates through `usedSubmissionIds`/
+`usedLoIds` and then, if the result was empty, always showed the same
+generic "no candidates" message — conflating "genuinely nothing eligible"
+with "eligible items existed but were already covered by a higher-priority
+section". Each section (`page.tsx`) now separately tracks its
+pre-cross-section-dedup eligible list; only when that list is non-empty but
+the post-dedup list is empty does the section swap to a distinct "already
+covered above" message (e.g. Practice: "Your priority topics are already
+covered in the recommendations above." instead of "No low-mastery topics
+right now for explanation practice." when the student demonstrably does
+have low-mastery topics, just not ones this section gets to claim).
+
+**Student-perspective copy, without touching the agents.** Neither the
+Diagnostic Agent's nor the Pedagogical Planner's prompt or schema changed.
+`translateForStudent.ts` gained `toStudentPerspective()`: a deterministic,
+bounded regex-based rewrite of the LLM's third-person analytics phrasing
+("The student has...", "the student's...") into direct second-person
+address ("You have...", "your..."), including subject-verb agreement for
+the swapped pronoun (has→have, is→are, etc.) and dropping one internal
+jargon token (`LO` → `topic`). It recognizes a fixed set of literal patterns
+and leaves anything else untouched rather than risking a mangled sentence —
+this is a targeted normalizer, not a general paraphraser, and does not call
+an LLM. Applied in `buildFocusResult.ts` to produce
+`primaryDiagnosisForStudent` (from `diagnosis.primaryDiagnosis`) and
+`planReasonForStudent` (from `plan.reason`); the raw, untranslated
+`diagnosis`/`plan` objects remain on `FocusResult` unchanged for any other
+consumer, and the full untranslated originals remain visible on
+`/debug/learning-state` regardless.
+
+### 27.12 Response.clone crash, Gemini truncation/503, and a pronoun gap
+
+Three independent bugs, fixed with the smallest safe change each.
+
+**"Response.clone: Body has already been consumed" in "Continue learning".**
+Root cause, confirmed by tracing (not guessed): `candidateSubmissions.ts`'s
+`gatherRankedCandidates()` and `page.tsx`'s "Continue learning" section
+issued a byte-identical PostgREST GET request (same table, columns, filter
+value, order, limit) against `student_submission_visit` within the same
+server-render request. `createSupabaseServerClient()` injects no custom
+`fetch`, so both go through Next.js App Router's globally-patched `fetch`,
+which performs request memoization — identical GET requests anywhere in one
+render pass are deduped, and the second caller is served a `.clone()` of
+the first response. Supabase-js's body-consumption pattern doesn't survive
+being served an already-consumed clone in this environment, throwing on the
+second (later) identical request. Fixed by removing the duplicate query
+entirely: `gatherRankedCandidates()` now returns
+`{ candidates, recentVisitRows }`, and "Continue learning" reuses
+`recentVisitRows` instead of re-fetching. No caching disabled, no
+architecture change — just one genuinely redundant query removed.
+
+**Gemini 503 ("high demand").** `getGeminiChat()`'s `maxRetries` option
+(already a clean, standard LangChain constructor option, not a hand-rolled
+loop) is now set to `1` specifically for the Pedagogical Planner's call —
+a single provider-level retry to ride out one transient failure before
+falling through to the unchanged `deterministicGroundedFallback()`. Not a
+retry loop, not applied to any other agent.
+
+**Gemini truncated JSON ("Unterminated string in JSON").** Three
+compounding, additive changes, all local to the Pedagogical Planner:
+`maxOutputTokens` raised `2500 → 4000` (still an explicit local override,
+not a change to `getGeminiChat()`'s own default); `PedagogicalPlanSchema.alternativesConsidered`
+tightened `max(4) → max(3)` (a stricter bound, not weakened validation —
+still Zod-validated, still rejects malformed/truncated JSON exactly as
+before); and `PEDAGOGICAL_PLANNER_PROMPT` now explicitly asks for at most
+2-3 alternatives and reinforces the existing ~180-char brevity target for
+`reasonNotChosen`. `action`/`targetLoId`/`targetSubmissionId`/`reason`/
+`supportingSignals`/grounding validation are all unchanged.
+
+**Student-facing "they" leak.** `toStudentPerspective()` (§27.11) only
+recognized "The student"/"the student's" — it correctly turned "The student
+is struggling..." into "You are struggling...", but a later pronoun in the
+same sentence referring back to that subject ("...because they lack
+mastery...") was left untouched, producing the reported "You are struggling
+because they lack mastery...". Since this text is always about exactly one
+student's own evidence (per both prompts' grounding rules), a bare
+"they"/"their"/"them"/"themselves" here reliably co-refers to the student,
+not some other plural noun — the normalizer now also replaces these
+(`they → you`, `their → your`, `them → you`, `themselves → yourself`,
+case-preserving), plus added "the learner"/"the learner's" alongside the
+existing "the student" patterns. Still no LLM call, still a bounded literal
+pattern list, not a general paraphraser.
+
+### 27.13 Translate at render time, not at cache-write time
+
+A follow-up "they" leak was reported after §27.12's fix. Tracing the exact
+reported sentence through the then-current `toStudentPerspective()` showed
+the regex was already correct — the real cause was that `CachedFocusView.primaryDiagnosis`/
+`.planReason` stored the **already-translated** string at the moment the
+Focus card was computed and cached (§27.2.1's 30-minute session cookie).
+Improving `toStudentPerspective()` doesn't change `CachedFocusView`'s shape,
+so it correctly didn't need a schema-version bump for that — but it meant
+any cookie written before the improvement kept serving its stale, pre-fix
+translated text until the cookie expired or the evidence fingerprint
+changed. This is a recurring failure class, not a one-off: any future
+wording improvement to the translator would have hit the same silent
+staleness.
+
+**Fix:** translation moved out of `buildFocusResult.ts` (which now leaves
+`diagnosis`/`plan` on `FocusResult` as raw, untranslated LLM output only)
+and into `page.tsx`, applied once at the single point of rendering
+`<FocusCard>` — `toStudentPerspective(focusView.primaryDiagnosis)` /
+`toStudentPerspective(focusView.planReason)` — for both the fresh-computation
+and cache-hit paths uniformly. `CachedFocusView` now caches the raw text
+instead. This means every render always reflects whatever the current
+translation logic is, so this exact class of bug cannot recur on future
+`toStudentPerspective()` changes. `FOCUS_CACHE_SCHEMA_VERSION` bumped
+`3 → 4` (same field names, reverted meaning: translated → raw) so any
+pre-existing cookie is treated as a clean cache miss, never partially
+trusted.
+
+### 27.14 Schema-native student-facing fields (retiring `toStudentPerspective()` from `/recommendations`)
+
+Even after §27.13's render-time fix, `toStudentPerspective()` kept
+surfacing new brittle edge cases against arbitrary Diagnostic/Planner
+prose (e.g. `"You's difficulty…"` from a possessive pattern the regex
+list hadn't anticipated). Regex-rewriting free-form LLM output is an
+open-ended problem — every new phrasing the model produces is a
+potential new bug, and the fix is never actually complete. Rather than
+keep expanding the pattern list, the fix was moved upstream into the
+agents' own structured output contracts.
+
+**Schema.** `DiagnosisSchema` (`output-schemas.ts`) gained `studentSummary`
+(`max(300)`) and `PedagogicalPlanSchema` gained `studentReason`
+(`max(300)`), both required, non-nullable. Both are described in the Zod
+schema as: written directly to the student, address only as "you"/"your",
+never "the student"/"the learner"/"they"/"their", no internal enum or
+debug language, and grounded in the same evidence as the existing internal
+fields (`primaryDiagnosis`/`explanation` for the diagnosis, `reason` for
+the plan) — no new claims or targets introduced. All pre-existing internal
+fields are unchanged and remain research/debug-quality (precise, allowed
+to name categories, numbers, signal types); `studentSummary`/`studentReason`
+are additive, not replacements. `DIAGNOSTIC_PROMPT` and
+`PEDAGOGICAL_PLANNER_PROMPT` (`prompts.ts`) were updated with matching
+instructions and their "Output format" lines now mention the new fields.
+
+**Fallbacks.** Every deterministic fallback branch (Diagnostic Agent's
+`deterministicNoRoadblockResult()`/`deterministicFallbackResult()`; Planner's
+`deterministicHealthyPlan()` (2 branches) and `deterministicGroundedFallback()`
+(4 branches)) now includes a hand-authored, grounded `studentSummary`/
+`studentReason` — no new LLM calls. In `sanitizePlan()`, if grounding
+validation downgrades the LLM's chosen `action` (e.g. an invalid
+`REVISIT_PREREQUISITE` target downgraded to `CONTINUE`), `studentReason` is
+now also swapped to a small safe generic string matched to the *new*
+action (`SAFE_STUDENT_REASON_ON_DOWNGRADE`), since it's shown to the student
+verbatim and would otherwise visibly contradict the action actually taken.
+`reason` (internal-only) is left as the LLM produced it either way, since it
+is debug/provenance text, never rendered to a student.
+
+**`/recommendations` (`page.tsx`, `FocusCard.tsx`).** No longer imports or
+calls `toStudentPerspective()`. `<FocusCard>`'s `primaryDiagnosis`/`planReason`
+props were renamed to `studentSummary`/`studentReason` and are rendered
+directly — `diagnosis.studentSummary` under "AI's read on this",
+`plan.studentReason` under "Recommended next step" (still overridden by the
+deterministic `actionDetail` when one exists, unchanged from §27.3). CTA
+label/href continue to come from `resolvePlanAction()`'s fully deterministic
+resolution — the LLM never generates URLs or routing; this was untouched.
+"What we noticed" evidence bullets (`describeSignalForStudent()`) are also
+untouched — they were already deterministic and unrelated to this fix.
+
+**Cache.** `CachedFocusView.primaryDiagnosis`/`.planReason` (raw text, per
+§27.13) replaced with `.studentSummary`/`.studentReason` (also raw — these
+are already second-person by construction, so caching-and-rendering-as-is is
+now safe with no transform step to go stale). `FOCUS_CACHE_SCHEMA_VERSION`
+bumped `4 → 5`, a one-time migration off the old field names (not another
+instance of the staleness bug §27.13 fixed, since there is no longer any
+transform for a stale cookie to preserve).
+
+**`toStudentPerspective()`'s fate.** Left defined and exported in
+`translateForStudent.ts` (not deleted) since nothing else in the codebase
+called it outside `/recommendations`'s two removed call sites — its doc
+comment now notes it is retired from that page and available if a future
+caller needs bounded third-person→second-person rewriting for some other
+free-text agent output.
+
+**`/debug/learning-state`.** `DiagnosticPanel.tsx` already dumped the full
+raw `Diagnosis`/`PedagogicalPlan` via `JSON.stringify(...)`, so the new
+fields appear there automatically; explicit labeled lines were also added
+for `studentSummary`/`studentReason` (visually distinct from the internal
+fields above them) so the raw-evidence → internal-diagnosis →
+student-facing-message provenance chain is visible at a glance during
+debugging.
 

@@ -62,6 +62,10 @@ The reviewed `frontend-app` currently uses:
 -   LangChain
 -   LangGraph
 -   Groq through `@langchain/groq`
+-   Gemini through `@langchain/google-genai` — currently used only as a
+    temporary single-provider test for the Pedagogical Planner
+    (`gemini-2.5-flash`); the Diagnostic Agent and every other agent remain
+    on Groq. See `ADAPTIVE_AND_AGENTIC_ARCHITECTURE.md` §27.10.
 -   Zod structured outputs
 -   SWR and Zustand where required
 
@@ -235,22 +239,35 @@ quiz and mastery information.
 
 ### Recommendations
 
-The recommendations page combines deterministic recommendation sections
-with newer agentic recommendation capabilities.
+`/recommendations` is now built around the evidence-grounded adaptive
+pipeline as its primary architecture:
 
-Current deterministic sections include:
+`StudentLearningState -> RoadblockEvidence -> Diagnostic Agent -> Pedagogical Planner -> student-facing action`
 
--   Continue learning
--   Recommended next LOs
--   Based on preferred content style
--   Active recall/revision reminders
--   Feynman technique
+On each page load, the student's recently active submissions are ranked
+**deterministically** (no LLM) by RoadblockEvidence severity — see
+`src/lib/adaptive/candidateSubmissions.ts`. Only the single
+highest-priority candidate is automatically run through the Diagnostic
+Agent + Pedagogical Planner (bounded LLM cost per page view; the healthy/
+no-roadblock case never calls the LLM at all, via the pipeline's existing
+deterministic short-circuits). Any other flagged submissions are shown in a
+subdued, on-demand "Other areas that might need attention" list — the LLM
+only runs for them if the student explicitly clicks to analyze one.
 
-The page also currently renders:
+The page also keeps four lighter, honestly-labelled deterministic sections
+(not driven by the new pipeline, but not claiming more than they are):
+Continue learning, Recommended next topics, Might be worth revisiting, and
+Practice explaining a concept.
 
--   `SpacedRepetitionWidget`
--   `GraphMutatorWidget`
--   `PeerMatchingWidget`
+Removed from the page (implementations kept, not deleted — see
+`ADAPTIVE_AND_AGENTIC_ARCHITECTURE.md` for the full disposition table):
+`SpacedRepetitionWidget`, `GraphMutatorWidget`, `PeerMatchingWidget`, and the
+unconditional `learning-router.ts` call that previously ran on every page
+load. All three widgets were found to send fabricated/hardcoded payloads
+rather than the signed-in student's real data, and `learning-router.ts`'s
+integration was found to silently substitute 0 for missing mastery/engagement
+evidence — both are documented in detail in the architecture doc rather than
+repeated here.
 
 The recommendations page is the primary area for current
 research-focused development.

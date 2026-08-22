@@ -160,6 +160,12 @@ export const DiagnosisSchema = z.object({
     .array(z.string().max(200))
     .max(8)
     .describe("Which evidence categories were unavailable or insufficient for this diagnosis"),
+  studentSummary: z
+    .string()
+    .max(300)
+    .describe(
+      "1-2 sentences written DIRECTLY to the student, addressing them only as 'you'/'your'. Never say 'the student', 'the learner', 'they', or 'their'. No internal enum names, signal types, or developer/debug language. Must stay grounded in the same evidence as primaryDiagnosis/explanation — do not introduce new claims."
+    ),
 });
 
 export type Diagnosis = z.infer<typeof DiagnosisSchema>;
@@ -217,11 +223,27 @@ export const PedagogicalPlanSchema = z.object({
     .array(
       z.object({
         action: PlannerActionEnum,
-        reasonNotChosen: z.string().max(200),
+        // Bumped from 200 -> 350: Gemini's otherwise semantically valid
+        // plans were being rejected purely because this natural-language
+        // field ran slightly over 200 chars. 350 is a safer hard ceiling;
+        // PEDAGOGICAL_PLANNER_PROMPT separately asks for a ~180 char soft
+        // brevity target so output stays concise in the common case.
+        reasonNotChosen: z.string().max(350),
       })
     )
-    .max(4)
-    .describe("Other actions considered and why they were not chosen"),
+    // Reduced from 4 -> 3: fewer, more useful alternatives, and a smaller
+    // hard ceiling on total output size (this array was a meaningful part
+    // of the truncated-output failures on verbose Gemini responses). Still
+    // validated the same way — this tightens the bound, it does not weaken
+    // validation.
+    .max(3)
+    .describe("The 2-3 most useful other actions considered and why they were not chosen"),
+  studentReason: z
+    .string()
+    .max(300)
+    .describe(
+      "1-2 sentences written DIRECTLY to the student explaining why this action was chosen, addressing them only as 'you'/'your'. Never say 'the student', 'the learner', 'they', or 'their'. No internal signal names, RoadblockEvidence types, or developer/debug language. Must stay grounded in the same evidence/targets already used for 'reason' — do not introduce new claims or targets."
+    ),
 });
 
 export type PedagogicalPlan = z.infer<typeof PedagogicalPlanSchema>;

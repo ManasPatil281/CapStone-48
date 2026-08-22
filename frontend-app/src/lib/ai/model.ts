@@ -1,12 +1,15 @@
 /**
- * Shared LangChain model factory for Groq.
+ * Shared LangChain model factories for Groq and (temporarily, for the
+ * Pedagogical Planner provider test) Gemini.
  *
- * Provides a centralized ChatGroq instance with retry logic and optional
- * model fallback. All AI endpoints should use `getGroqChat()` instead of
- * constructing models directly.
+ * Provides centralized ChatGroq/ChatGoogleGenerativeAI instances with retry
+ * logic and optional model fallback. All AI endpoints should use
+ * `getGroqChat()` / `getGeminiChat()` instead of constructing models
+ * directly.
  */
 
 import { ChatGroq } from "@langchain/groq";
+import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 
 /* ── defaults ────────────────────────────────────────────────────────── */
 
@@ -61,3 +64,44 @@ export function getGroqChatWithFallback(
 }
 
 export { DEFAULT_MODEL, FALLBACK_MODEL };
+
+/* ── Gemini (temporary planner-provider test) ───────────────────────────
+ * Not part of a multi-provider fallback yet — see
+ * src/lib/ai/agents/pedagogical-planner.ts for the current single-provider
+ * test wiring. Groq→Gemini→deterministic fallback routing is a follow-up.
+ */
+
+const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
+
+export interface GeminiChatOptions {
+  /** Model name override (default: gemini-2.5-flash). */
+  model?: string;
+  /** Sampling temperature (0-1, default: 0.35). */
+  temperature?: number;
+  /** Maximum output tokens to generate. */
+  maxOutputTokens?: number;
+  /** Number of automatic retries on transient errors (default: 0 here — no silent internal retries burning quota before our own fallback logic runs). */
+  maxRetries?: number;
+}
+
+/**
+ * Create a `ChatGoogleGenerativeAI` instance pre-configured for this
+ * project. Reads `GEMINI_API_KEY` from `process.env` — the SDK itself would
+ * also fall back to `GOOGLE_API_KEY`, but this project's convention is
+ * `GEMINI_API_KEY`, so it's read and validated explicitly here to match
+ * `getGroqChat()`'s error-message style.
+ */
+export function getGeminiChat(options: GeminiChatOptions = {}): ChatGoogleGenerativeAI {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("Missing GEMINI_API_KEY environment variable.");
+  }
+
+  return new ChatGoogleGenerativeAI({
+    apiKey,
+    model: options.model ?? DEFAULT_GEMINI_MODEL,
+    temperature: options.temperature ?? 0.35,
+    maxOutputTokens: options.maxOutputTokens,
+    maxRetries: options.maxRetries ?? 0,
+  });
+}
