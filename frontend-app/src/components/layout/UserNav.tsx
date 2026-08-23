@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { Route } from "next";
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useUser } from "@/lib/auth/hooks";
 import { Button } from "@/components/ui/button";
@@ -86,13 +86,6 @@ export function UserNav() {
       document.removeEventListener("keydown", handleEscape);
     };
   }, [isMenuOpen]);
-
-  const handleMenuNavigate = (
-    href: "/profile" | "/recommendations" | "/dashboard" | "/teacher"
-  ) => {
-    setIsMenuOpen(false);
-    router.push(href as Route);
-  };
 
   const handleSignOut = async () => {
     if (!user || isSigningOut) {
@@ -235,38 +228,40 @@ export function UserNav() {
             aria-label="User options"
             className="absolute right-0 z-50 mt-2 w-56 overflow-hidden rounded-xl border border-slate-800 bg-slate-950/95 p-1.5 shadow-[0_16px_38px_rgba(2,6,23,0.55)] backdrop-blur-sm"
           >
-            <button
-              type="button"
-              onClick={() => {
-                handleMenuNavigate("/profile");
-              }}
+            {/*
+              Real <Link>s (not buttons calling router.push) so these
+              genuine navigations participate directly in the global
+              NavigationProgress anchor click-capture detector — the same
+              mechanism <Link> uses everywhere else in the app — instead of
+              only reaching it via the slower router.push/pushState fallback.
+              onClick only closes the dropdown; it never intercepts navigation.
+            */}
+            <Link
+              href="/profile"
+              onClick={() => setIsMenuOpen(false)}
               className="flex w-full items-center rounded-lg px-3 py-2 text-left text-sm text-slate-200 transition-colors hover:bg-slate-800/70"
               role="menuitem"
             >
               My profile
-            </button>
+            </Link>
 
-            <button
-              type="button"
-              onClick={() => {
-                handleMenuNavigate("/recommendations");
-              }}
+            <Link
+              href="/recommendations"
+              onClick={() => setIsMenuOpen(false)}
               className="flex w-full items-center rounded-lg px-3 py-2 text-left text-sm text-slate-200 transition-colors hover:bg-slate-800/70"
               role="menuitem"
             >
               Recommendations
-            </button>
+            </Link>
 
-            <button
-              type="button"
-              onClick={() => {
-                handleMenuNavigate(dashboardHref);
-              }}
+            <Link
+              href={dashboardHref}
+              onClick={() => setIsMenuOpen(false)}
               className="flex w-full items-center rounded-lg px-3 py-2 text-left text-sm text-slate-200 transition-colors hover:bg-slate-800/70"
               role="menuitem"
             >
               Dashboard
-            </button>
+            </Link>
 
             <button
               type="button"

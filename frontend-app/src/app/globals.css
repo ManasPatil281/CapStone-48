@@ -85,6 +85,39 @@ html {
   background: linear-gradient(90deg, #6366f1, #818cf8);
 }
 
+/* ── Route navigation progress bar ──────────────────────────────────────── */
+@keyframes pf-nav-progress {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  60% {
+    transform: translateX(20%);
+  }
+
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.animate-pf-nav-progress {
+  animation: pf-nav-progress 0.9s ease-in-out infinite;
+}
+
+/*
+ * Loading cursor while an internal navigation is pending. `wait` (the full
+ * hourglass/spinner) is used instead of `progress` because on Windows the
+ * `progress` cursor is a subtle arrow+spinner glyph that's easy to miss;
+ * `wait` is unambiguous. `!important` + the universal descendant selector
+ * are both required: interactive elements (links, buttons, and in
+ * particular the ReactFlow roadmap nodes, which set `cursor: pointer`
+ * inline) would otherwise keep their own cursor while hovered.
+ */
+html.pf-route-loading,
+html.pf-route-loading * {
+  cursor: wait !important;
+}
+
 /* ── Card hover lift ─────────────────────────────────────────────────────── */
 .card-lift {
   transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;

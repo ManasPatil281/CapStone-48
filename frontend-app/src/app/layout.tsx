@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import "./globals.css";
 import { cn } from "@/lib/utils";
 import { UserNav } from "@/components/layout/UserNav";
 import { AgentModeOverlay } from "@/components/layout/AgentModeOverlay";
+import { NavigationProgress } from "@/components/layout/NavigationProgress";
 
 export const metadata: Metadata = {
   title: "Adaptive Learning Platform",
@@ -17,6 +19,10 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={cn("min-h-screen bg-slate-950 text-slate-50 antialiased")}>
+        <Suspense fallback={null}>
+          <NavigationProgress />
+        </Suspense>
+
         <header className="sticky top-0 z-50 border-b border-slate-800/60 bg-slate-950/95 backdrop-blur-md">
           <div className="flex h-14 items-center justify-between px-6">
             {/* Brand */}
