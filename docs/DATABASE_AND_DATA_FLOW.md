@@ -518,11 +518,47 @@ Any code reconstructing question-level quiz evidence from these columns must
 treat both as untrusted JSON shapes (validate they are actually an array /
 plain object before use) rather than assuming the shape holds.
 
+### `student_feynman_attempt` (implemented)
+
+Purpose: persistent history of Feynman-explanation evaluations — one row per
+attempt, mirroring `student_quiz_attempt`'s shape/conventions. Added so
+Feynman evidence survives as real history instead of only the latest
+attempt's summary surviving inside `student_submission_mastery.metadata_json`.
+
+Columns:
+
+- `id uuid` PK
+- `student_id uuid` FK → `user_profile.id` (`NO ACTION`, same historical-tracking convention as `student_quiz_attempt`)
+- `submission_id uuid` FK → `teacher_lo_submission.id` (`NO ACTION`)
+- `explanation text` — the student's submitted explanation
+- `score numeric`
+- `feedback text` nullable
+- `misconceptions jsonb` nullable — array of strings
+- `follow_up_question text` nullable
+- `submitted_at timestamptz` default `now()`
+
+No uniqueness constraint (a student may submit multiple Feynman attempts
+over time, same as quiz attempts). Non-unique index on
+`(student_id, submission_id, submitted_at desc)` supports the canonical
+mastery engine's recency-weighted read pattern.
+
+Written only by `POST /api/feynman/evaluate`, immediately followed by a call
+into the canonical mastery engine (`src/lib/mastery/recalculateMastery.ts`)
+— this route no longer computes or writes `student_submission_mastery`
+itself. See `ADAPTIVE_AND_AGENTIC_ARCHITECTURE.md` §4–§5.
+
 ## 9. Student mastery
 
 ### `student_submission_mastery`
 
-Purpose: persistent mastery state per student/submission.
+Purpose: persistent **CURRENT** mastery state per student/submission — "how
+well does the student appear to understand this submission now," not the
+best they have ever demonstrated. The score can rise and fall as new
+evidence arrives. See `ADAPTIVE_AND_AGENTIC_ARCHITECTURE.md` §4–§5 for the
+full engine design and the audit that motivated this redefinition (the
+previous engine selected the single best-ever historical quiz attempt,
+which could keep a student showing as "Proficient" indefinitely after a
+single old high score, even after later scoring 0% repeatedly).
 
 Columns:
 
@@ -534,7 +570,8 @@ Columns:
 - `last_calculated_at`
 - `metadata_json jsonb`
 
-Current mastery scale:
+Current mastery scale (unchanged by the current-mastery redesign — only what
+feeds the score changed, not the level bands):
 
 - 0–39: Beginner
 - 40–69: Developing
@@ -543,7 +580,25 @@ Current mastery scale:
 
 Exact deterministic formula is documented in `ADAPTIVE_AND_AGENTIC_ARCHITECTURE.md`.
 
-`metadata_json` is used to preserve component signals and can also store prototype Feynman evaluation metadata.
+**No row is written when there is no knowledge evidence yet** (no quiz
+attempt and no Feynman attempt) — "no evidence yet" must read as unknown,
+never as a confident 0. A missing row is the correct representation of that
+state; downstream readers already treat a missing row as unknown.
+
+`metadata_json` holds the computed breakdown from the single canonical
+engine (`engineVersion`, `quizCurrentScore`, `quizAttemptCountUsed`,
+`feynmanCurrentScore`, `feynmanAttemptCountUsed`, `knowledgeScore`,
+`engagementModifier`, `finalScore`) — it does not duplicate raw attempt
+history, which already lives in `student_quiz_attempt`/`student_feynman_attempt`.
+
+### Single canonical writer
+
+`src/lib/mastery/recalculateMastery.ts` is the **only** code path that
+writes this table. Previously two independent formulas wrote to it (the
+main engine and a separate Feynman-route blend `existingMastery*0.7 +
+feynmanScore*0.3`) — that second writer has been removed; the Feynman route
+now persists its evidence to `student_feynman_attempt` and calls the same
+canonical engine. Do not add a second writer without updating this section.
 
 ### Confirmed mastery uniqueness
 

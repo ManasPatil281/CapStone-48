@@ -129,89 +129,154 @@ knowledge about what can precede/follow an LO.
 Student explanations can be evaluated to add evidence about conceptual
 understanding that is different from multiple-choice performance.
 
-## 4. Deterministic mastery engine
+## 4. Deterministic mastery engine — CURRENT mastery (v2, implemented)
+
+> **Redesign note (current-mastery-v2).** This engine was substantially
+> redesigned from an earlier "best-ever" formula. An audit found that the
+> old `computeQuizScore()` selected the single highest historical quiz
+> score, which meant a student who scored 100% once could keep showing as
+> Proficient/Mastered indefinitely afterward, even after later scoring 0%
+> repeatedly — `mastery_score` was effectively tracking *peak* demonstrated
+> performance while every downstream consumer (roadmap coloring,
+> postrequisite "mastered" gating, "Continue learning"/"explore next"
+> sections, the tutor agent's mastery-status tool) read it as if it meant
+> *current* competence. The engine below is the fix: `mastery_score` now
+> answers "how well does the student appear to understand this submission
+> **now**," and is designed to rise and fall as new evidence arrives. The
+> `4.x`/`5` sections below describe the CURRENT (v2) design; the old
+> best-ever formula and the Feynman route's independent blend formula are
+> both retired.
 
 Source:
 
-`src/lib/mastery/calculateMasteryScore.ts`
+`src/lib/mastery/calculateMasteryScore.ts` (pure formula) +
+`src/lib/mastery/recalculateMastery.ts` (the single DB-touching orchestrator
+— see §4.7).
 
-### 4.1 Content score
+### 4.1 Recency-weighted "current" score (shared by quiz and Feynman)
 
-For each content block with a positive `recommendedTimeSeconds`:
+Both quiz and Feynman evidence are reduced to a "current" score using the
+same recency-weighting scheme, over at most the 5 most recent attempts:
 
-`ratio = activeSeconds / recommendedTimeSeconds`
+-   rank 1 (most recent attempt) is **always** weight 5, regardless of how
+    many total attempts exist;
+-   rank 2 = weight 4, rank 3 = weight 3, rank 4 = weight 2, rank 5 = weight 1;
+-   with fewer than 5 attempts, only the top-N weights are used, normalised
+    by their own sum (e.g. 3 attempts → weights `[5,4,3]`, sum 12 — the
+    latest attempt's relative share grows as evidence shrinks, which is
+    intentional: there is genuinely less competing evidence to weigh it
+    against);
+-   an attempt outside the 5-attempt window has **zero** influence — this is
+    what lets an old peak fade out once enough new evidence exists, and
+    what prevents best-ever performance from permanently propping up the
+    score.
 
-Current scoring:
+With exactly 5 attempts present, the latest attempt contributes `5/15 ≈
+33.3%` of the weighted score — deliberately **not** capped further (a
+single accidental low attempt can move the score, but it competes against
+up to 4 other recent, weighted data points, so it does not single-handedly
+destroy it). No separate trend/improvement bonus is added on top — the
+recency weighting already captures improvement/decline, and
+`RoadblockEvidence` (§18) separately explains *why* a change happened using
+the same raw quiz history.
 
--   ratio \< 0.7: scaled score `(ratio / 0.7) * 70`
--   ratio 0.7--1.3: score `100`
--   ratio \> 1.3: decreasing score `100 - (ratio - 1.3) * 20`, floored
-    at `60`
+### 4.2 Quiz current score
 
-The content score is the average across eligible blocks, rounded to one
-decimal.
-
-Interpretation: substantially under-consuming a recommended block
-reduces the engagement-derived score; a broad on-target band receives
-full credit; extreme over-time is treated as a possible
-difficulty/inefficiency signal.
-
-This is a heuristic and should be described as such in research writing.
-
-### 4.2 Quiz score
-
-The best valid quiz attempt is selected.
-
-A multiplier is applied based on `randomizationMode`:
+Each scored, timestamped quiz attempt is adjusted by a `randomizationMode`
+multiplier before entering the recency-weighted average (unchanged from the
+old engine's multiplier, just applied per-attempt instead of only to the
+single "best" one):
 
 -   mode 0: ×1.00
 -   mode 1: ×1.05
 -   mode 2: ×1.10
 
-Result is capped at 100.
+Each adjusted score is capped at 100, then combined via §4.1's
+recency-weighted formula to produce `quizCurrentScore`.
 
-### 4.3 Idle penalty
+### 4.3 Feynman current score (implemented — own attempt history)
 
-Total content idle time is compared with total active time.
+Feynman evaluations are now persisted as their own historical rows in
+`student_feynman_attempt` (see `DATABASE_AND_DATA_FLOW.md` §8), not only as
+the latest snippet inside `metadata_json`. `feynmanCurrentScore` is computed
+with the **identical** recency-weighted formula (§4.1) over up to the 5 most
+recent Feynman attempts from that table.
 
-`idlePenalty = min(8, idle / active * 8)`
+### 4.4 Knowledge score (quiz + Feynman combination)
 
-No active time means no idle penalty.
+-   Quiz only → `knowledgeScore = quizCurrentScore`
+-   Feynman only → `knowledgeScore = feynmanCurrentScore`
+-   Both available → `knowledgeScore = QUIZ_KNOWLEDGE_WEIGHT * quizCurrentScore + FEYNMAN_KNOWLEDGE_WEIGHT * feynmanCurrentScore`,
+    with `QUIZ_KNOWLEDGE_WEIGHT = 0.60` and `FEYNMAN_KNOWLEDGE_WEIGHT = 0.40`
 
-### 4.4 Improvement bonus
+**These weights are an explicit, named PILOT heuristic, not an empirically
+validated weighting** — they exist so the two knowledge sources combine
+predictably, and should be revisited once real classroom data can calibrate
+them. Missing one source is never a penalty: a student with only quiz
+evidence is scored purely on `quizCurrentScore`, with no discount for
+lacking a Feynman attempt (the old engine's `0.75 ×` quiz-only discount is
+removed for exactly this reason).
 
-With at least two timestamped attempts:
+If there is **no** knowledge evidence at all (no quiz attempt AND no
+Feynman attempt), the engine returns `null` and the caller writes **no**
+`student_submission_mastery` row — "no evidence yet" must stay unknown,
+never become a confident 0. See §4.7 for who calls this and when.
 
--   compare earliest score with latest score;
--   no bonus if latest \<= earliest;
--   otherwise `(latest - earliest) / 4`;
--   cap at +5.
+### 4.5 Engagement modifier (content/activity — bounded, non-positive)
 
-### 4.5 Signal combination
+Content-block time and idle behaviour are exposure/engagement evidence, not
+proof of understanding, per this document's §3 caveats. The engagement
+modifier can therefore only ever **subtract** points, never add them — time
+spent alone can never raise mastery, and it is always applied on top of an
+already-required `knowledgeScore` (§4.4), so it can never independently
+produce a Proficient/Mastered score either.
 
-If both content and quiz scores exist:
+Two independently-capped components, both reusing the 0.7 on-target
+breakpoint from the old content-ratio curve:
 
-`combined = 0.5 * contentScore + 0.5 * quizScore`
+-   **Under-exposure** — for content blocks with a `recommendedTimeSeconds`,
+    `ratio = totalActiveSeconds / totalRecommendedSeconds`; if `ratio < 0.7`,
+    penalty = `min(2, (0.7 - ratio) / 0.7 * 2)`, else 0.
+-   **Idle** — `idleRatio = totalIdleSeconds / totalActiveSeconds` (0 if no
+    active time); penalty = `min(3, idleRatio * 3)`.
 
-Content only:
+`engagementModifier = -min(5, underExposurePenalty + idlePenalty)` — always
+in `[-5, 0]`.
 
-`combined = contentScore`
+### 4.6 Final score
 
-Quiz only:
+`finalScore = clamp(knowledgeScore + engagementModifier, 0, 100)`, rounded
+to one decimal. `mastery_level` uses the **same, unchanged** thresholds
+(§4.8) — only the meaning of the score changed, not the bands.
 
-`combined = 0.75 * quizScore`
+### 4.7 Recalculation — canonical engine, event-driven
 
-Neither:
+`src/lib/mastery/recalculateMastery.ts` is the **single** DB-touching
+function that reads quiz attempts + Feynman attempts + content-block time,
+calls the pure formula above, and upserts `student_submission_mastery` (or
+writes nothing if the result is `null`). It is the **only** code path
+permitted to write that table.
 
-`combined = 0`
+Triggers:
 
-Final:
+-   **Quiz submitted** → `QuizSession.tsx` calls `POST
+    /api/mastery/recalculate` (auth-checked; student id always comes from
+    the session, never the request body) immediately after the
+    `student_quiz_attempt` insert succeeds.
+-   **Feynman evaluation completed** → `POST /api/feynman/evaluate` persists
+    the attempt to `student_feynman_attempt`, then calls
+    `recalculateMastery()` directly (same request, no extra round-trip). The
+    route no longer computes or writes mastery itself.
+-   **Submission page visit** → kept as a **fallback/idempotent consistency
+    pass** (unconditional on every student visit, same trigger as before),
+    but it is no longer the *primary* way quiz/Feynman evidence reaches
+    mastery — it mainly exists to catch slowly-accumulated content-
+    engagement drift and any missed-event edge cases.
+-   **Content-engagement tracking flush** → deliberately does **not**
+    trigger a recalculation (too frequent/low-signal); covered by the
+    page-visit fallback instead.
 
-`mastery = clamp(combined - idlePenalty + improvementBonus, 0, 100)`
-
-rounded to one decimal.
-
-### 4.6 Mastery levels
+### 4.8 Mastery levels (unchanged)
 
 -   0--39: Beginner
 -   40--69: Developing
@@ -219,27 +284,55 @@ rounded to one decimal.
 -   85--100: Mastered
 
 Do not change these thresholds without explicit approval and
-documentation update.
+documentation update. (The current-mastery redesign changed what feeds this
+scale, not the scale itself.)
 
-## 5. Feynman mastery signal
+### 4.9 Metadata / provenance
 
-The Feynman feature evaluates a student's own explanation of an LO.
+`metadata_json` on `student_submission_mastery` holds the computed
+breakdown, versioned explicitly:
 
-The current design uses a validated 0--100 explanation score.
+```
+{
+  engineVersion: "current-mastery-v2",
+  quizCurrentScore: number | null,
+  quizAttemptCountUsed: number,
+  feynmanCurrentScore: number | null,
+  feynmanAttemptCountUsed: number,
+  knowledgeScore: number,
+  engagementModifier: number,
+  finalScore: number
+}
+```
 
-Where the prototype mastery update is used, the intended conservative
-blend is:
+Raw attempt history is **not** duplicated into this metadata — it already
+lives in `student_quiz_attempt`/`student_feynman_attempt`. Best-ever/peak
+scores are intentionally **not** persisted anywhere on the mastery row;
+where a "personal best" figure is useful, derive it on read from those
+attempt-history tables (`MAX(score)`) rather than storing it, since attempt
+history is never deleted.
 
-`newMastery = 0.7 * existingMastery + 0.3 * feynmanScore`
+## 5. Feynman evidence (implemented)
 
-For a missing mastery row, the prototype can initialise conservatively
-from a fraction of the Feynman score rather than treating one
-explanation as complete mastery.
+The Feynman feature evaluates a student's own explanation of an LO via a
+LangGraph Socratic-coaching flow (`src/lib/ai/agents/feynman-coach.ts`),
+producing a validated 0--100 explanation score, feedback, misconceptions,
+and an optional follow-up question.
 
-The agentic Feynman code now includes a LangGraph/Socratic workflow and
-a multi-agent evaluator in the reviewed source. Exact route behaviour
-should be verified before describing every internal stage as part of the
-live UI.
+Each evaluation is persisted as its own row in `student_feynman_attempt`
+(`DATABASE_AND_DATA_FLOW.md` §8) — full history is retained, not just the
+latest attempt. `POST /api/feynman/evaluate` no longer computes or writes
+`student_submission_mastery` itself; it persists the attempt and then calls
+the same canonical mastery engine (`recalculateMastery()`, §4.7) that quiz
+submissions use. The route's previous independent blend formula
+(`newMastery = 0.7 * existingMastery + 0.3 * feynmanScore`) is retired — it
+was a second, disagreeing mastery formula writing the same row as the main
+engine, which is exactly the kind of inconsistency the current-mastery
+redesign eliminated (see §4's redesign note).
+
+Feynman evidence is combined with quiz evidence as a co-equal "knowledge
+evidence" source (§4.4), not blended into a running mastery number after
+the fact.
 
 Research significance:
 
@@ -590,9 +683,10 @@ reads the existing `student_submission_mastery` row as-is. It assembles, for
 one student/submission pair:
 
 -   course and LO identity;
--   persisted mastery score/level/metadata (including Feynman fields already
-    stored in `metadata_json`, surfaced separately as a convenience view —
-    not a new table);
+-   persisted mastery score/level/metadata;
+-   the most recent `student_feynman_attempt` row, surfaced as a convenience
+    view (`state.feynman`) — Feynman evidence now has its own history table
+    (§4.3/§5) rather than living only inside mastery's `metadata_json`;
 -   quiz attempt history/count/best/latest and a trend label reusing the
     existing ±5-point first-vs-last convention from
     `src/lib/ai/tools/quiz-weakness.ts`;
@@ -1589,7 +1683,7 @@ deciding its disposition. Findings and outcomes:
 | `struggle-detector.ts` | Confirmed (grep) to have **no live caller anywhere** in the app — it only exists as the architectural precedent `roadblockEvidence.ts`'s thresholds were deliberately copied from. | Left as-is. Out of scope for this page; not a `/recommendations` concern. |
 | `multi-agent-evaluator.ts` | Fully implemented (defender/strict/judge) but confirmed to have **zero callers** — the live Feynman path uses the simpler `feynman-coach.ts` instead. | Left as-is (dead code, not deleted per project convention). |
 | `tutor-agent.ts` | Live and well-grounded (4 real DB-backed tools) via `/api/chat` + `SubmissionChatPanel`/`AgentModeOverlay` — a genuinely good agent, just not related to `/recommendations`. | Untouched. Not surfaced on this page; a future "ask the tutor" CTA from the Focus card is a reasonable idea, not built now. |
-| Feynman flow (`FeynmanClient.tsx`, `/api/feynman/evaluate`) | Backend evaluation and mastery blending are correctly grounded and already documented above. The client only ever did a single evaluate call and **discarded** the `misconceptions`/`followUpQuestion` fields the API already returns. | **Kept, scope-limited rework**: `FeynmanClient.tsx` now renders `misconceptions` and `followUpQuestion` when present. The multi-turn Socratic loop itself was deliberately NOT built — that would be a larger Feynman redesign, out of scope here. |
+| Feynman flow (`FeynmanClient.tsx`, `/api/feynman/evaluate`) | Backend evaluation is correctly grounded and documented above (§4–§5; the route's mastery write now goes through the canonical current-mastery engine, not an independent blend). The client only ever did a single evaluate call and **discarded** the `misconceptions`/`followUpQuestion` fields the API already returns. | **Kept, scope-limited rework**: `FeynmanClient.tsx` now renders `misconceptions` and `followUpQuestion` when present. The multi-turn Socratic loop itself was deliberately NOT built — that would be a larger Feynman redesign, out of scope here. |
 
 ### 27.8 Precedence-based cross-section deduplication and conflict prevention
 

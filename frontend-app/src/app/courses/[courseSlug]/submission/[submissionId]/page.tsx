@@ -8,7 +8,7 @@ import type { RoadmapEdge, RoadmapNode } from "@/components/lo/RoadmapTree";
 import { buildSubmissionChatContext } from "@/lib/ai/context";
 import { ArrowLeft, ArrowRight, User } from "lucide-react";
 import type { SubmissionStats, StatContentBlock } from "@/components/lo/StatisticsTab";
-import { calculateMasteryScore } from "@/lib/mastery/calculateMasteryScore";
+import { recalculateMastery } from "@/lib/mastery/recalculateMastery";
 import { computePopularPath } from "@/lib/popularity/computePopularPath";
 
 interface PageProps {
@@ -459,28 +459,17 @@ export default async function SubmissionDetailPage({ params }: PageProps) {
       samplePercentage: r.sample_percentage,
     }));
 
-    const masteryResult = calculateMasteryScore({
-      contentBlocks: statContentBlocks,
-      contentBlockTimes,
-      quizAttempts,
-    });
-
+    // Fallback/idempotent consistency pass through the single canonical
+    // mastery engine — no longer the primary way quiz/Feynman evidence
+    // reaches mastery (see api/mastery/recalculate and api/feynman/evaluate),
+    // but still catches slowly-accumulated content-engagement drift and any
+    // missed-event edge cases. Returns null (writes nothing) when there is
+    // no knowledge evidence yet.
+    let masteryResult: Awaited<ReturnType<typeof recalculateMastery>> = null;
     try {
-      await supabaseAny
-        .from("student_submission_mastery")
-        .upsert(
-          {
-            student_id: userId,
-            submission_id: submission.id,
-            mastery_score: masteryResult.score,
-            mastery_level: masteryResult.level,
-            last_calculated_at: new Date().toISOString(),
-            metadata_json: masteryResult.metadata,
-          },
-          { onConflict: "student_id,submission_id" }
-        );
+      masteryResult = await recalculateMastery(userId, submission.id);
     } catch (masteryErr) {
-      console.error("[SubmissionDetailPage] Failed to upsert mastery:", masteryErr);
+      console.error("[SubmissionDetailPage] Failed to recalculate mastery:", masteryErr);
     }
 
     submissionStats = {

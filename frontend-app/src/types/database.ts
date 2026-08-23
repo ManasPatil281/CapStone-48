@@ -226,6 +226,29 @@ export interface Database {
           is_correct: boolean;
         };
       };
+      student_feynman_attempt: {
+        Row: {
+          id: string;
+          student_id: string;
+          submission_id: string;
+          explanation: string;
+          score: number;
+          feedback: string | null;
+          misconceptions: Json | null;
+          follow_up_question: string | null;
+          submitted_at: string;
+        };
+        Insert: {
+          id?: string;
+          student_id: string;
+          submission_id: string;
+          explanation: string;
+          score: number;
+          feedback?: string | null;
+          misconceptions?: Json | null;
+          follow_up_question?: string | null;
+        };
+      };
     };
   };
 }

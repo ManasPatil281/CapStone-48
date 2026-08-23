@@ -37,7 +37,8 @@ export type SubmissionStats = {
   contentBlocks: StatContentBlock[];
   contentBlockTimes: StatContentBlockTime[];
   quizAttempts: StatQuizAttempt[];
-  masteryResult?: MasteryResult;
+  /** null when there is no knowledge evidence (quiz/Feynman) yet — mastery stays unknown, not 0. */
+  masteryResult?: MasteryResult | null;
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

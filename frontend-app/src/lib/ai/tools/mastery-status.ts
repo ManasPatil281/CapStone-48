@@ -1,8 +1,9 @@
 /**
  * Tool: Check student's mastery status for a submission.
  *
- * Queries `student_submission_mastery` to return the student's
- * current mastery score and level.
+ * Queries `student_submission_mastery` to return the student's CURRENT
+ * mastery score and level (recency-weighted quiz/Feynman evidence, not
+ * best-ever performance — see calculateMasteryScore.ts).
  */
 
 import { DynamicStructuredTool } from "@langchain/core/tools";
@@ -39,7 +40,7 @@ export function createMasteryStatusTool() {
         }
 
         if (!data) {
-          return "No mastery data found for this student on this submission. They haven't been assessed yet.";
+          return "No mastery data found for this student on this submission — they haven't taken a quiz or done a Feynman explanation on it yet, so current mastery is unknown (not zero).";
         }
 
         const score =
@@ -49,25 +50,19 @@ export function createMasteryStatusTool() {
         const level = data.mastery_level || "unknown";
         const lastCalculated = data.last_calculated_at || "unknown";
 
-        // Extract useful metadata
+        // Extract useful metadata (current-mastery-v2 engine breakdown).
         const meta = data.metadata_json as Record<string, unknown> | null;
         const extras: string[] = [];
 
         if (meta) {
-          if (typeof meta.contentScore === "number") {
-            extras.push(`Content engagement: ${Math.round(meta.contentScore as number)}%`);
+          if (typeof meta.quizCurrentScore === "number") {
+            extras.push(`Recent quiz performance: ${Math.round(meta.quizCurrentScore as number)}%`);
           }
-          if (typeof meta.quizScore === "number") {
-            extras.push(`Best quiz score: ${Math.round(meta.quizScore as number)}%`);
+          if (typeof meta.feynmanCurrentScore === "number") {
+            extras.push(`Recent Feynman performance: ${Math.round(meta.feynmanCurrentScore as number)}%`);
           }
-          if (typeof meta.feynmanScore === "number") {
-            extras.push(`Feynman score: ${Math.round(meta.feynmanScore as number)}%`);
-          }
-          if (typeof meta.idlePenalty === "number" && (meta.idlePenalty as number) > 0) {
-            extras.push(`Idle penalty: -${meta.idlePenalty}pts`);
-          }
-          if (typeof meta.improvementBonus === "number" && (meta.improvementBonus as number) > 0) {
-            extras.push(`Improvement bonus: +${meta.improvementBonus}pts`);
+          if (typeof meta.engagementModifier === "number" && (meta.engagementModifier as number) < 0) {
+            extras.push(`Engagement adjustment: ${meta.engagementModifier}pts`);
           }
         }
 

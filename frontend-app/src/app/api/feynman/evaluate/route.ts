@@ -1,12 +1,15 @@
 /**
  * POST /api/feynman/evaluate — Feynman Socratic Coaching Evaluator
  *
- * Upgraded from single-shot regex-parsed grading to a LangGraph-based
- * Socratic coaching flow:
- *
  * 1. Structured output via Zod (no more regex)
  * 2. Misconception detection + follow-up questions
- * 3. Score blending into persisted mastery (preserved from original)
+ * 3. Persists the attempt to `student_feynman_attempt`, then invokes the
+ *    canonical mastery engine (`recalculateMastery`) — this route no longer
+ *    computes or writes `mastery_score` itself. See
+ *    ADAPTIVE_AND_AGENTIC_ARCHITECTURE.md for why the previous
+ *    `existingMastery * 0.7 + feynmanScore * 0.3` blend was retired: it was
+ *    a second, independent mastery formula that disagreed with (and
+ *    partially clobbered the metadata of) the main engine.
  *
  * Falls back to simple LangChain structured output if LangGraph fails.
  */
@@ -17,6 +20,7 @@ import { evaluateFeynman } from "@/lib/ai/agents/feynman-coach";
 import { getGroqChat } from "@/lib/ai/model";
 import { FEYNMAN_EVALUATION_PROMPT } from "@/lib/ai/prompts";
 import { FeynmanEvaluationSchema } from "@/lib/ai/output-schemas";
+import { recalculateMastery } from "@/lib/mastery/recalculateMastery";
 
 type MasteryLevel = "Beginner" | "Developing" | "Proficient" | "Mastered";
 
@@ -48,7 +52,6 @@ export async function POST(request: Request) {
       .eq("id", user.id)
       .maybeSingle();
 
-    
     const role = String(profile?.role ?? "").toUpperCase();
     if (role !== "STUDENT") {
       if (process.env.NODE_ENV === "development") {
@@ -154,57 +157,35 @@ export async function POST(request: Request) {
       }
     }
 
-    // Persist mastery (preserved from original implementation)
-    const { data: existing } = await supabaseAny
-      .from("student_submission_mastery")
-      .select("mastery_score, metadata_json")
-      .eq("student_id", user.id)
-      .eq("submission_id", submissionId)
-      .maybeSingle();
+    // Persist the Feynman attempt as its own historical evidence row (new
+    // table — see student_feynman_attempt migration) instead of only
+    // surviving as the latest snippet inside mastery's metadata_json.
+    const { error: feynmanInsertErr } = await supabaseAny.from("student_feynman_attempt").insert({
+      student_id: user.id,
+      submission_id: submissionId,
+      explanation,
+      score: feynmanScore,
+      feedback: feynmanFeedback,
+      misconceptions: misconceptions.length > 0 ? misconceptions : null,
+      follow_up_question: followUpQuestion || null,
+    });
 
-    const now = new Date().toISOString();
-    let newMasteryScore: number;
-    let existingMetadata: Record<string, unknown> = {};
-
-    if (!existing) {
-      newMasteryScore = feynmanScore * 0.3;
-    } else {
-      const current =
-        typeof existing.mastery_score === "number" ? existing.mastery_score : 0;
-      existingMetadata =
-        existing.metadata_json &&
-        typeof existing.metadata_json === "object" &&
-        !Array.isArray(existing.metadata_json)
-          ? (existing.metadata_json as Record<string, unknown>)
-          : {};
-      newMasteryScore = current * 0.7 + feynmanScore * 0.3;
+    if (feynmanInsertErr) {
+      console.error("[api/feynman/evaluate] Failed to persist Feynman attempt:", feynmanInsertErr);
+      return NextResponse.json(
+        { error: "Failed to save your explanation. Please try again." },
+        { status: 500 }
+      );
     }
 
-    newMasteryScore =
-      Math.round(Math.max(0, Math.min(100, newMasteryScore)) * 10) / 10;
-    const newLevel = toLevel(newMasteryScore);
-
-    const newMetadata: Record<string, unknown> = {
-      ...existingMetadata,
-      feynmanScore,
-      feynmanFeedback,
-      lastFeynmanAttemptAt: now,
-      masterySource: "feynman_langgraph",
-      misconceptions:
-        misconceptions.length > 0 ? misconceptions : undefined,
-    };
-
-    await supabaseAny.from("student_submission_mastery").upsert(
-      {
-        student_id: user.id,
-        submission_id: submissionId,
-        mastery_score: newMasteryScore,
-        mastery_level: newLevel,
-        last_calculated_at: now,
-        metadata_json: newMetadata,
-      },
-      { onConflict: "student_id,submission_id" }
-    );
+    // Recalculate mastery through the single canonical engine — this route
+    // no longer computes or writes mastery_score itself.
+    const masteryResult = await recalculateMastery(user.id, submissionId);
+    // A Feynman attempt is knowledge evidence, so recalculateMastery should
+    // never return null immediately after this insert — this fallback only
+    // guards against an unexpected read-after-write race.
+    const newMasteryScore = masteryResult?.score ?? feynmanScore;
+    const newLevel = masteryResult?.level ?? toLevel(newMasteryScore);
 
     return NextResponse.json({
       score: feynmanScore,

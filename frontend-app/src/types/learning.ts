@@ -32,6 +32,8 @@ export type TeacherSubmissionQuestion = Tables["teacher_lo_submission_question"]
 };
 export type TeacherSubmissionQuestionOption = Tables["teacher_lo_submission_question_option"]["Row"];
 
+export type StudentFeynmanAttempt = Tables["student_feynman_attempt"]["Row"];
+
 export interface LearningObjectDetail extends LearningObject {
   contents: LearningObjectContent[];
   deliveryTypes: Record<string, DeliveryType>;

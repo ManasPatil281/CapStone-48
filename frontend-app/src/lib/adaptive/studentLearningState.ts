@@ -280,9 +280,8 @@ export async function buildStudentLearningState(
     course = courseRow ? { id: courseRow.id, title: courseRow.title, slug: courseRow.slug } : null;
   }
 
-  // --- Mastery + Feynman (derived from mastery.metadata_json) ---
+  // --- Mastery (canonical current-mastery engine output, read-only) ---
   let mastery: StudentLearningState["mastery"] = null;
-  let feynman: StudentLearningState["feynman"] = null;
   {
     const { data, error } = await supabaseAny
       .from("student_submission_mastery")
@@ -307,17 +306,39 @@ export async function buildStudentLearningState(
         lastCalculatedAt: data.last_calculated_at ?? null,
         metadata,
       };
+    }
+  }
 
-      if (metadata && typeof metadata.feynmanScore === "number") {
-        feynman = {
-          score: metadata.feynmanScore as number,
-          feedback: typeof metadata.feynmanFeedback === "string" ? (metadata.feynmanFeedback as string) : null,
-          lastAttemptAt:
-            typeof metadata.lastFeynmanAttemptAt === "string" ? (metadata.lastFeynmanAttemptAt as string) : null,
-          misconceptions: Array.isArray(metadata.misconceptions) ? (metadata.misconceptions as string[]) : null,
-          source: typeof metadata.masterySource === "string" ? (metadata.masterySource as string) : null,
-        };
-      }
+  // --- Feynman (own historical evidence table, not metadata_json) ---
+  // Exposes the single most recent Feynman attempt as a convenience view;
+  // the canonical mastery engine independently recency-weights up to the
+  // last 5 attempts from this same table when computing feynmanCurrentScore.
+  let feynman: StudentLearningState["feynman"] = null;
+  {
+    const { data: feynmanRows, error: feynmanErr } = await supabaseAny
+      .from("student_feynman_attempt")
+      .select("score, feedback, misconceptions, submitted_at")
+      .eq("student_id", studentId)
+      .eq("submission_id", submissionId)
+      .order("submitted_at", { ascending: false })
+      .limit(1);
+
+    if (feynmanErr) {
+      console.error("[buildStudentLearningState] Failed to load Feynman attempts:", feynmanErr);
+    }
+
+    const latest = (feynmanRows ?? [])[0] as
+      | { score: number | null; feedback: string | null; misconceptions: unknown; submitted_at: string | null }
+      | undefined;
+
+    if (latest && typeof latest.score === "number") {
+      feynman = {
+        score: latest.score,
+        feedback: latest.feedback ?? null,
+        lastAttemptAt: latest.submitted_at ?? null,
+        misconceptions: Array.isArray(latest.misconceptions) ? (latest.misconceptions as string[]) : null,
+        source: "student_feynman_attempt",
+      };
     }
   }
 

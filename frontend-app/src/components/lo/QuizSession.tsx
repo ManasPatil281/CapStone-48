@@ -160,6 +160,20 @@ export function QuizSession({ assessment, trackingContext }: Props) {
       if (insertErr) {
         throw insertErr;
       }
+
+      // Trigger the canonical mastery engine immediately so this attempt is
+      // reflected without waiting for the next page visit. Best-effort: a
+      // failure here must not block the quiz UI — the submission-page visit
+      // fallback recomputation will still pick this attempt up later.
+      try {
+        await fetch("/api/mastery/recalculate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ submissionId: trackingContext.submissionId }),
+        });
+      } catch (recalcErr) {
+        console.error("[QuizSession] Mastery recalculation request failed:", recalcErr);
+      }
     } catch (submitErr) {
       console.error("[QuizSession] Failed to track quiz attempt:", submitErr);
     } finally {
